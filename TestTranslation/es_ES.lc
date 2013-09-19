@@ -1,0 +1,18 @@
+locale es_ES:
+
+# all comments are in en_US.lc
+myApplication: {
+    myTranslation1: "El texto traducido va aquí"
+    myTranslation2: "Las traducciones están separadas por líneas"
+
+    myParameterizedTranslation: (int x) -> "El valor de x es ${str(@x)}."
+
+    subGroupsCanBeNested: {
+        deeperTranslation: "Más texto"
+        referencingOthers: (int x) -> "Aquí llamo a otra traducción: ${^.^.myParameterizedTranslation(@x)}"
+    }
+
+    moreReferences: "subGroupsCanBeNested.deeperTranslation: ${myApplication.subGroupsCanBeNested.deeperTranslation}"
+
+    aList: [ "línea1", "línea2", "línea3" ]
+}

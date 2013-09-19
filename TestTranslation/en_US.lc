@@ -1,0 +1,25 @@
+locale en_US:
+
+# comments are allowed
+# myApplication is a subgroup
+myApplication: {
+    myTranslation1: "Translated text goes here"
+    myTranslation2: "Translations are separated by newlines"
+
+    # simple lambda functions are available
+    # ${} blocks are evaluated
+    # use @var to reference an argument
+    # path.to.var to access other elements builtins
+    myParameterizedTranslation: (int x) -> "Value of x is ${str(@x)}."
+
+    subGroupsCanBeNested: {
+        deeperTranslation: "More text"
+
+        # ^ in a path goes up one level
+        referencingOthers: (int x) -> "Here I call a translation: ${^.^.myParameterizedTranslation(@x)}"
+    }
+
+    moreReferences: "subGroupsCanBeNested.deeperTranslation: ${myApplication.subGroupsCanBeNested.deeperTranslation}"
+
+    aList: [ "line1", "line2" ]
+}
