@@ -9,7 +9,7 @@ myApplication: {
     # simple lambda functions are available
     # ${} blocks are evaluated
     # use @var to reference an argument
-    # path.to.var to access other elements builtins
+    # path.to.var to access other elements or builtins
     myParameterizedTranslation: (int x) -> "Value of x is ${str(@x)}."
 
     subGroupsCanBeNested: {
