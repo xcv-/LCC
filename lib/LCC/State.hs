@@ -16,9 +16,12 @@ module LCC.State
   , addEnv
   , addAllEnv
 
-  , findSignatures
   , filterParams
+
   , findGlobalSignatures
+  , findGlobalSignature
+
+  , findSignatures
   , findSignature
   ) where
 
@@ -52,12 +55,20 @@ paramSignature param = Signature
 filterParams :: String -> [Param] -> [Param]
 filterParams name = filter (\p -> paramName p == name)
 
+matchParams :: [Type] -> GenericSignature p -> Bool
+matchParams types signature = map paramType (sigParams signature) == types
+
+
 findGlobalSignatures :: AbsVarPath -> LC [TranslationSignature]
 findGlobalSignatures path =
     filter (\sig -> sigPath sig == path) <$> signatures
   where
     signatures :: LC [TranslationSignature]
     signatures = Set.toList . envSignatures <$> getEnv
+
+findGlobalSignature :: AbsVarPath -> [Type] -> LC (Maybe TranslationSignature)
+findGlobalSignature path paramTypes =
+    find (matchParams paramTypes) <$> findGlobalSignatures path
 
 
 findSignatures :: VarPath -> LC [SymbolSignature]
@@ -74,11 +85,9 @@ findSignatures (ParamName name) = do
         TranslationScope _ params  ->
             return . map paramSignature . filterParams name $ params
 
-
 findSignature :: VarPath -> [Type] -> LC (Maybe SymbolSignature)
-findSignature path paramTypes = find condition <$> findSignatures path
-  where
-    condition sig = map paramType (sigParams sig) == paramTypes
+findSignature path paramTypes =
+    find (matchParams paramTypes) <$> findSignatures path
 
 
 -- Scope

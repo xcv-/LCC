@@ -3,20 +3,21 @@ module LCC.Output.Java
   ( JavaTarget (..)
   ) where
 
+import Data.List
+import Data.List.Split
+import Data.Maybe
 import Data.Monoid ((<>))
+
+import qualified Data.Map as Map
+import qualified Data.Text as T
+import qualified Data.Text.IO as T
+
 import Control.Monad
 import Control.Monad.Error
 import Control.Applicative
 
 import System.IO
 import System.FilePath ((</>))
-
-import Data.List
-import Data.List.Split
-
-import qualified Data.Map as M
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
 
 import LCC.Analyzer
 import LCC.State
@@ -36,8 +37,8 @@ data JavaTarget = JavaTarget
 builtinParam :: Type -> Param
 builtinParam pType = Param pType "<?>"
 
-builtins :: M.Map TranslationSignature T.Text
-builtins = M.fromList $ builtinMap
+builtins :: Map.Map TranslationSignature T.Text
+builtins = Map.fromList $ builtinMap
     [ (["str"], [TChar  ], TString, "Character.toString")
     , (["str"], [TString], TString, ""                  )
     , (["str"], [TInt   ], TString, "Integer.toString"  )
@@ -51,6 +52,16 @@ builtins = M.fromList $ builtinMap
                     }
         , replacement
         )
+
+isBuiltin :: AbsVarPath -> [Type] -> Bool
+isBuiltin path paramTypes =
+    isJust $ find match (Map.keys builtins)
+  where
+    match :: TranslationSignature -> Bool
+    match signature = sigPath signature   == path
+                   && sigParams signature == params
+    params :: [Param]
+    params = map builtinParam paramTypes
 
 
 
@@ -72,8 +83,18 @@ javaType (TArray e) = javaType e <> "[]"
 javaParam :: Param -> T.Text
 javaParam param = javaType (paramType param) <> " " <> T.pack (paramName param)
 
+
 getter :: T.Text -> T.Text
-getter name = "__get_" <> name
+getter name = "_get_" <> name
+
+lazy :: T.Text -> T.Text
+lazy name = "_lazy_" <> name
+
+constructor :: T.Text -> T.Text
+constructor name = "_new_" <> name
+
+call :: (T.Text -> T.Text) -> T.Text -> T.Text
+call modifier name = modifier name <> "()"
 
 
 quote :: Char -> T.Text
@@ -119,14 +140,17 @@ exprToString (ArrayLiteral exprs) = do
 exprToString (Funcall (ParamName name) args) =
     return $ T.pack name
 
-exprToString (Funcall (AbsolutePath path) args) =
-    T.concat <$> liftM2 (:) name' argList
+exprToString (Funcall fpath@(AbsolutePath path) []) =
+    return $ T.intercalate "." $ map (call getter . T.pack) path
+
+exprToString (Funcall fpath@(AbsolutePath path) args) =
+    T.concat <$> liftM2 (:) path' argList
   where
-    name' :: LC T.Text
-    name' = do
-        signature' <- signature
-        if signature' `M.member` builtins
-          then return $ builtins M.! signature'
+    path' :: LC T.Text
+    path' = do
+        isBuiltin <- (`Map.member` builtins) <$> signature
+        if isBuiltin
+          then (builtins Map.!) <$> signature
           else return $ fmtPath path
 
     argList :: LC [T.Text]
@@ -137,15 +161,20 @@ exprToString (Funcall (AbsolutePath path) args) =
 
     signature :: LC TranslationSignature
     signature = do
-        params <- forM args $ \arg -> builtinParam <$> inferType arg
-        return $ Signature (AbsVarPath path) params TString
+        paramTypes <- mapM inferType args
+
+        sig <- findGlobalSignature (AbsVarPath path) paramTypes
+
+        let notFound = LocaleSignatureNotFoundError <$> getScope
+                                                    <*> pure fpath
+                                                    <*> pure paramTypes
+        maybe (throwError =<< notFound) return sig
 
     fmtPath :: [String] -> T.Text
-    fmtPath p = T.intercalate "." . mapGetter . map T.pack $ p
+    fmtPath p = T.intercalate "." . mapGetterCall . map T.pack $ p
       where
-        mapGetter [] = []
-        mapGetter [p] = [getter p]
-        mapGetter (p:ps) = getter p <> "()" : mapGetter ps
+        mapGetterCall (p0:p1:ps) = call getter p0 : mapGetterCall (p1:ps)
+        mapGetterCall l = l
 
 
 localeOutput :: JavaTarget -> [Locale] -> LC T.Text
@@ -163,57 +192,73 @@ localeOutput target locales = liftM T.unlines $ sequence $
         package = T.pack $ javaPackage target
         iface = T.pack $ javaInterfaceName target
 
-    exportInterface = return . T.concat . map (interface 1) . sortData . lcData
-    exportImplementation = instantiation 1
+    exportInterface = fmap T.concat . mapM (interface 1) . lcData
+    exportImplementation = implementation 1
 
     postscript = "}"
 
-    sortData :: [TranslationData] -> [TranslationData]
-    sortData = uncurry (++) . partition isNested
-      where
-        isNested NestedData{} = True
-        isNested _ = False
-
-
     -- Interface
-    interface :: Int -> TranslationData -> T.Text
+    interface :: Int -> TranslationData -> LC T.Text
     interface lvl td@Translation{ tdKey=key, tdParams=params } =
-           ind <> apply publicAccessor
-        <> ind <> apply privateInterface
-        <> "\n"
+        inInnerScope td $
+          liftM T.concat $ sequence $
+            case params of
+              [] -> [ return $ ind <> "// " <> T.pack key <> "\n"
+                    , apply interfaceGetter
+                    , apply interfaceConstructor
+                    , apply interfaceLazyValue
+                    , apply interfaceValue
+                    , return "\n"
+                    ]
+
+              _  -> [ apply interfaceFunction
+                    , return "\n"
+                    ]
       where
-        apply f = f lvl "String" (T.pack key) params
+        apply f = do
+            scope <- getScope
+            Just sig <- findGlobalSignature (scopePath scope) (map paramType params)
+            let returnType = sigReturn sig
+            return $ f target lvl (javaType returnType) (T.pack key) params
 
         ind = javaIndent target lvl
 
-
-    interface lvl NestedData { tdSubGroupName=name, tdNestedData=nd } =
-           innerInterface
-        <> ind <> apply publicAccessor
-        <> ind <> apply privateInterface
-        <> "\n"
+    interface lvl td@NestedData { tdSubGroupName=name, tdNestedData=nd } =
+        inInnerScope td $
+          T.concat <$> sequence
+            [  return $ ind <> "// " <> T.pack name <> "\n"
+            , innerInterface
+            , apply interfaceGetter
+            , apply interfaceConstructor
+            , apply interfaceLazyValue
+            , apply interfaceValue
+            , return "\n"
+            ]
       where
-        apply f = f lvl iface (T.pack name) []
+        apply f = return $ f target lvl iface (T.pack name) []
 
+        innerInterface :: LC T.Text
         innerInterface =
-          T.concat $
-            [ ind <> "public static abstract class " <> iface <> " {\n" ] ++
+            liftM T.concat $
+              return [ ind <> "public static abstract class " <> iface <> " {\n" ] <->
 
-            map (interface $ lvl+1) (sortData nd) ++
+              mapM (interface $ lvl+1) nd <->
 
-            [ ind <> "}\n" ]
+              return [ ind <> "}\n" ]
+
+        (<->) = liftM2 (<>)
 
         iface = T.pack name
         ind = javaIndent target lvl
 
 
     -- Implementation
-    instantiation :: Int -> Locale -> LC T.Text
-    instantiation lvl locale =
+    implementation :: Int -> Locale -> LC T.Text
+    implementation lvl locale =
         T.concat <$> sequence
           [ return $ ind <> signature <> " = " <> "new " <> iface <> "() {\n"
 
-          , dataInstantiation (lvl+1) (lcData locale)
+          , dataImplementation (lvl+1) (lcData locale)
 
           , return $ ind <> "};\n"
           ]
@@ -225,114 +270,145 @@ localeOutput target locales = liftM T.unlines $ sequence $
         ind = javaIndent target lvl
 
 
-    dataInstantiation :: Int -> [TranslationData] -> LC T.Text
-    dataInstantiation lvl tds =
-        T.concat <$> mapM (dataInstantiation' lvl) (sortData tds)
+    dataImplementation :: Int -> [TranslationData] -> LC T.Text
+    dataImplementation lvl tds =
+        T.concat <$> mapM (dataImplementation' lvl) tds
       where
         isNested NestedData {} = True
         isNested _ = False
 
 
     -- single
-    dataInstantiation' :: Int -> TranslationData -> LC T.Text
-    dataInstantiation' lvl td@Translation { tdKey=key, tdParams=params } =
-        inInnerScope td $ apply implementHelperGetter expr
+    dataImplementation' :: Int -> TranslationData -> LC T.Text
+    dataImplementation' lvl td@Translation { tdKey=key, tdParams=params } =
+        inInnerScope td $
+          case params of
+            [] -> apply implementConstructor
+            _  -> apply implementFunction
       where
-        apply f e = do
-            rt <- javaType <$> returnType
-            f lvl rt (T.pack key) params e
+        apply f = do
+            returnTypeStr <- javaType <$> returnType
+            f target lvl returnTypeStr (T.pack key) params fexpr
 
         returnType = do
             scope <- getScope
+
             let (AbsVarPath path) = scopePath scope
+                notFound = LocaleSymbolNotFoundError scope (AbsolutePath path)
+
             sigs <- findGlobalSignatures (AbsVarPath path)
             case sigs of
-                [] ->
-                    throwError $ LocaleSymbolNotFoundError scope (AbsolutePath path)
-                (s:ss) ->
-                    return $ sigReturn s
+                []    -> throwError notFound
+                (s:_) -> return $ sigReturn s
 
-        expr _ = exprToString (tdImpl td)
+        fexpr _ = exprToString (tdImpl td)
 
 
     -- nested
-    dataInstantiation' lvl td@NestedData { tdSubGroupName=name, tdNestedData=nd } =
-        inInnerScope td $
-          apply implementHelperGetter >>= ($expr)
+    dataImplementation' lvl td@NestedData { tdSubGroupName=name, tdNestedData=nd } =
+        inInnerScope td $ apply implementConstructor
       where
-        apply f = do
-          iface' <- iface
-          return $ f lvl iface' (T.pack name) []
+        apply f = f target lvl iface (T.pack name) [] fexpr
 
-        expr lvl2 = do
-          iface' <- iface
-
+        fexpr lvl2 = do
           T.concat <$> sequence
-            [ return $ "new " <> iface' <> "() {\n"
+            [ return $ "new " <> iface <> "() {\n"
 
-            , dataInstantiation (lvl2+1) nd
+            , dataImplementation (lvl2+1) nd
 
             , return $ javaIndent target lvl2  <> "}"
             ]
 
-        iface = do
-            (AbsVarPath path) <- getScopePath
-            return $ T.intercalate "." $ map T.pack path
-
-    publicAccessor :: Int -> T.Text -> T.Text -> [Param] -> T.Text
-    publicAccessor lvl returnType name params =
-        "public final " <> returnType <> " " <> name <> definition
-      where
-        fmtParams = "("
-                 <> T.intercalate "," (map javaParam params)
-                 <> ")"
-
-        definition = fmtParams <> " {\n"
-                  <> ind2 <> "return " <> value <> ";\n"
-                  <> ind <> "}\n"
-
-        value = getterCall
-
-        getterCall = getter name <> fmtArgs
-
-        fmtArgs = "("
-               <> T.intercalate "," (map (T.pack . paramName) params)
-               <> ")"
-
-        ind = javaIndent target lvl
-        ind2 = javaIndent target (lvl+1)
-
-    privateInterface :: Int -> T.Text -> T.Text -> [Param] -> T.Text
-    privateInterface lvl returnType name params =
-        helperGetterSignature lvl returnType name params <> ";\n"
+        iface = T.pack name
 
 
-    helperGetterSignature :: Int -> T.Text -> T.Text -> [Param] -> T.Text
-    helperGetterSignature lvl returnType name params =
-        "protected " <> returnType <> " " <> getter name <> fmtParams
-      where
-        fmtParams = "("
-                 <> T.intercalate "," (map javaParam params)
-                 <> ")"
+interfaceGetter,
+ interfaceConstructor,
+ interfaceLazyValue,
+ interfaceValue,
+ interfaceFunction
+  :: JavaTarget -> Int -> T.Text -> T.Text -> [Param] -> T.Text
 
-    implementHelperGetter :: Int -> T.Text -> T.Text -> [Param]
-                          -> (Int -> LC T.Text)
-                          -> LC T.Text
-    implementHelperGetter lvl returnType name params expr =
-        T.concat <$> sequence
-          [ return $ ind <> "@Override\n"
-          , return $ ind <> signature <> " {\n"
-          , return $ ind2 <> "return ", expr (lvl+1) , return ";\n"
-          , return $ ind <> "}\n"
-          ]
-      where
-        signature = helperGetterSignature lvl returnType name params
-        ind = javaIndent target lvl
-        ind2 = javaIndent target (lvl+1)
+
+interfaceGetter target lvl returnType name _ =
+    ind 0 <> "protected final " <> returnType <> " " <> getter name <> "() {\n" <>
+    ind 1 <>   "return " <> lazy name <> " != null \n"                          <>
+    ind 2 <>     "? "  <> lazy name                                   <>   "\n" <>
+    ind 2 <>     ": (" <> lazy name <> " = " <> call constructor name <> ");\n" <>
+    ind 0 <> "}\n"
+  where
+    ind = javaIndent target . (lvl+)
+
+
+interfaceConstructor target lvl returnType name _ =
+    ind <> "protected abstract " <> returnType <> " " <> constructor name <> "();\n"
+  where
+    ind = javaIndent target lvl
+
+
+interfaceLazyValue target lvl returnType name _ =
+    ind <> "private " <> returnType <> " " <> lazy name <> ";\n"
+  where
+    ind = javaIndent target lvl
+
+
+interfaceValue target lvl returnType name _ =
+    ind <> "public final " <> returnType <> " " <> name <> " = "
+                                                <> call getter name <> ";\n"
+  where
+    ind = javaIndent target lvl
+
+
+interfaceFunction target lvl returnType name params =
+    ind <> "public abstract " <> returnType <> " " <> name <> paramList <> ";\n"
+  where
+    paramList = "("
+             <> T.intercalate ", " (map javaParam params)
+             <> ")"
+
+    ind = javaIndent target lvl
+
+
+
+implementConstructor,
+ implementFunction
+  :: JavaTarget -> Int -> T.Text -> T.Text -> [Param] -> (Int -> LC T.Text)
+  -> LC T.Text
+
+implementConstructor target lvl returnType name _ fexpr =
+    T.concat <$> sequence
+      [ return $ ind  <> "@Override\n"
+      , return $ ind  <> "protected final " <> signature <> " {\n"
+      , return $ ind2 <> "return ", fexpr (lvl+1) , return ";\n"
+      , return $ ind  <> "}\n"
+      ]
+  where
+    signature = returnType <> " " <> call constructor name
+
+    ind = javaIndent target lvl
+    ind2 = javaIndent target (lvl+1)
+
+
+implementFunction target lvl returnType name params fexpr =
+    T.concat <$> sequence
+      [ return $ ind  <> "@Override\n"
+      , return $ ind  <> "public final " <> signature <> " {\n"
+      , return $ ind2 <> "return ", fexpr (lvl+1) , return ";\n"
+      , return $ ind  <> "}\n"
+      ]
+  where
+    signature = returnType <> " " <> name <> paramList
+    paramList = "("
+             <> T.intercalate ", " (map javaParam params)
+             <> ")"
+
+    ind = javaIndent target lvl
+    ind2 = javaIndent target (lvl+1)
+
 
 
 instance Target JavaTarget where
-    setEnv target = addAllEnv (M.keys builtins)
+    setEnv target = addAllEnv (Map.keys builtins)
 
     output target locales = sequence [(,) filePath <$> javaOutput]
       where
