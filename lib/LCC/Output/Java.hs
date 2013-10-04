@@ -82,6 +82,16 @@ javaType TChar   = "char"
 javaType TString = "String"
 javaType (TArray e) = javaType e <> "[]"
 
+javaBoxed :: T.Text -> T.Text
+javaBoxed "boolean" = "Boolean"
+javaBoxed "byte"    = "Byte"
+javaBoxed "char"    = "Character"
+javaBoxed "float"   = "Float"
+javaBoxed "int"     = "Integer"
+javaBoxed "long"    = "Long"
+javaBoxed "short"   = "Short"
+javaBoxed other     = other
+
 javaParam :: Param -> T.Text
 javaParam param = javaType (paramType param) <> " " <> T.pack (paramName param)
 
@@ -357,7 +367,7 @@ interfaceConstructor target lvl returnType name _ =
 
 
 interfaceLazyValue target lvl returnType name _ =
-    ind <> "private " <> returnType <> " " <> lazy name <> ";\n"
+    ind <> "private " <> javaBoxed returnType <> " " <> lazy name <> ";\n"
   where
     ind = javaIndent target lvl
 

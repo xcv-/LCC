@@ -111,60 +111,59 @@ verifyNameLookup lc@Locale { lcData=ld } = do
     verifyExprNameLookup _ _ = return ()
 
 
+-- Signature scanner.
+-- Initial idea: Dependency graph. It can't infer lists properly yet, using
+-- a dirty solution for now
+{-builtins <- Set.map sigPath . envSignatures <$> getEnv
+
+let adaptNode (path, params, expr) = (path, (expr, params))
+    nodes = map adaptNode flattened
+    listKeys (expr, params) = typeInferenceDependencies builtins expr
+    (graph, fromVertex, toVertex) = dependencyGraph nodes listKeys
+
+forM_ (sortGraph graph) $ \vert ->
+    let ((expr, params), path, _) = fromVertex vert
+        returnType = inScope (TranslationScope path params) $ inferType expr
+    in addEnv =<< Signature path params <$> returnType-}
+
 populateEnv :: Locale -> LC ()
 populateEnv Locale { lcData=lcd } = do
-    builtins <- Set.map sigPath . envSignatures <$> getEnv
+    populateEnv' $ concatMap flatten lcd
 
-    populateEnv' builtins (concatMap flatten lcd)
-
-    -- Initial idea: Dependency graph. It can't infer lists properly yet, using
-    -- a dirty solution for now
-    {-builtins <- Set.map sigPath . envSignatures <$> getEnv
-
-    let adaptNode (path, params, expr) = (path, (expr, params))
-        nodes = map adaptNode flattened
-        listKeys (expr, params) = typeInferenceDependencies builtins expr
-        (graph, fromVertex, toVertex) = dependencyGraph nodes listKeys
-
-    forM_ (sortGraph graph) $ \vert ->
-        let ((expr, params), path, _) = fromVertex vert
-            returnType = inScope (TranslationScope path params) $ inferType expr
-        in addEnv =<< Signature path params <$> returnType-}
   where
-    populateEnv' :: Set.Set AbsVarPath -> [(AbsVarPath, [Param], Expr)] -> LC ()
-    populateEnv' builtins [] = return ()
-    populateEnv' builtins unknownTranslations = do
+    populateEnv' :: [(AbsVarPath, [Param], Expr)] -> LC ()
+    populateEnv' [] = return ()
+    populateEnv' unknownTranslations = do
         new <- populateEnvIter unknownTranslations
 
         if null new
           then let adapt (path, params, _) = Signature path params TAny
                in throwError $ LocaleCycleError (map adapt unknownTranslations)
 
-          else populateEnv' builtins (unknownTranslations \\ new)
+          else populateEnv' (unknownTranslations \\ new)
 
-      where
-        populateEnvIter :: [(AbsVarPath, [Param], Expr)] -> LC [(AbsVarPath, [Param], Expr)]
-        populateEnvIter [] = return []
-        populateEnvIter (t@(path, params, expr) : ts) = do
+    populateEnvIter :: [(AbsVarPath, [Param], Expr)] -> LC [(AbsVarPath, [Param], Expr)]
+    populateEnvIter [] = return []
+    populateEnvIter (t@(path, params, expr) : ts) = do
+        returnType <- inScope (TranslationScope path params) $
+                        exprType (inferCommonType False) False expr
 
-            returnType <- inScope (TranslationScope path params) $
-                            exprType (inferCommonType False) False expr
+        let rest = populateEnvIter ts
 
-            let rest = populateEnvIter ts
+        if returnType == TAny
+          then rest
+          else addEnv (Signature path params returnType) >> liftM (t:) rest
 
-            if returnType == TAny
-              then rest
-              else addEnv (Signature path params returnType) >> liftM (t:) rest
 
-    flatten :: TranslationData -> [(AbsVarPath, [Param], Expr)]
-    flatten td@NestedData { tdSubGroupName=name, tdNestedData=nested } =
-        concatMap (map (append name) . flatten) nested
-      where
-        append name (AbsVarPath path, params, expr) =
-            (AbsVarPath $ name : path, params, expr)
+flatten :: TranslationData -> [(AbsVarPath, [Param], Expr)]
+flatten td@NestedData { tdSubGroupName=name, tdNestedData=nested } =
+    concatMap (map (append name) . flatten) nested
+  where
+    append name (AbsVarPath path, params, expr) =
+        (AbsVarPath $ name : path, params, expr)
 
-    flatten Translation { tdKey=key, tdParams=params, tdImpl=expr } =
-        [(AbsVarPath [key], params, expr)]
+flatten Translation { tdKey=key, tdParams=params, tdImpl=expr } =
+    [(AbsVarPath [key], params, expr)]
 
 
 makeAbsolute :: RawLocale -> LC Locale
