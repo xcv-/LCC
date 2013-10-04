@@ -35,6 +35,9 @@ typeInferenceDependencies :: Set.Set AbsVarPath -> Expr -> [AbsVarPath]
 typeInferenceDependencies known (ArrayLiteral exprs) =
     minimumBy (compare `on` length) $ map (typeInferenceDependencies known) exprs
 
+typeInferenceDependencies known (Conditional _ ifTrue ifFalse) =
+    typeInferenceDependencies known (ArrayLiteral [ifTrue, ifFalse])
+
 typeInferenceDependencies known (Funcall (AbsolutePath path) _)
   | path' `Set.member` known = []
   | otherwise = [path']

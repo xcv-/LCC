@@ -2,6 +2,7 @@ module LCC.Lexer
   ( whiteSpace
   , lexeme
   , symbol
+  , reserved
   , parens
   , braces
   , brackets
@@ -12,10 +13,11 @@ module LCC.Lexer
   , commaSep1
 
   , identifier
-  , charLiteral
-  , stringLiteral
   , intLiteral
   , floatLiteral
+  , charLiteral
+  , stringLiteral
+  , boolLiteral
   ) where
 
 
@@ -33,7 +35,11 @@ import Data.List
 import qualified Data.Text as T
 
 
-javaKeywords, cppKeywords :: [String]
+lcKeywords, javaKeywords, cppKeywords :: [String]
+
+lcKeywords = ["locale", "int",    "double", "bool",
+              "char",   "string", "true",   "false",
+              "if",     "then",   "else"]
 
 javaKeywords = ["abstract", "continue",     "for",       "new",
                 "switch",   "assert",       "default",   "goto",
@@ -82,6 +88,7 @@ lccDef = Tok.LanguageDef
   , Tok.opStart        = P.oneOf ""
   , Tok.opLetter       = P.oneOf ""
   , Tok.reservedNames  = foldl1' union [ (Tok.reservedNames Lang.haskellDef)
+                                       , lcKeywords
                                        , javaKeywords
                                        , cppKeywords
                                        ]
@@ -94,6 +101,7 @@ lcc = Tok.makeTokenParser lccDef
 whiteSpace     = Tok.whiteSpace    lcc
 lexeme         = Tok.lexeme        lcc
 symbol         = Tok.symbol        lcc
+reserved       = Tok.reserved      lcc
 parens         = Tok.parens        lcc
 braces         = Tok.braces        lcc
 brackets       = Tok.brackets      lcc
@@ -104,7 +112,11 @@ commaSep       = Tok.commaSep      lcc
 commaSep1      = Tok.commaSep1     lcc
 
 identifier     = Tok.identifier    lcc
+intLiteral     = Tok.integer       lcc
+floatLiteral   = Tok.float         lcc
 charLiteral    = Tok.charLiteral   lcc
 stringLiteral  = Tok.stringLiteral lcc
-floatLiteral   = Tok.float         lcc
-intLiteral     = Tok.integer       lcc
+
+boolLiteral    = (True  <$ symbol "true")
+           P.<|> (False <$ symbol "false")
+           P.<?> "boolean literal"

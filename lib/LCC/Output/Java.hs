@@ -43,6 +43,7 @@ builtins = Map.fromList $ builtinMap
     , (["str"], [TString], TString, ""                  )
     , (["str"], [TInt   ], TString, "Integer.toString"  )
     , (["str"], [TDouble], TString, "Double.toString"   )
+    , (["str"], [TBool  ], TString, "Boolean.toString"  )
     ]
   where
     builtinMap = map $ \(path, paramTypes, ret, replacement) ->
@@ -73,6 +74,7 @@ javaIndent target count = T.replicate count unit
              else "\t"
 
 javaType :: Type -> T.Text
+javaType TAny    = error "TAny passed to javaType"
 javaType TInt    = "int"
 javaType TDouble = "double"
 javaType TBool   = "boolean"
@@ -114,10 +116,12 @@ quoteString c = quote c
 
 
 exprToString :: Expr -> LC T.Text
-exprToString (IntLiteral i)    = return $ T.pack $ show i
-exprToString (DoubleLiteral d) = return $ T.pack $ show d
-exprToString (CharLiteral c)   = return $ "'" <> quoteChar c <> "'"
-exprToString (StringLiteral s) = return $
+exprToString (IntLiteral i)      = return $ T.pack $ show i
+exprToString (DoubleLiteral d)   = return $ T.pack $ show d
+exprToString (BoolLiteral True)  = return "true"
+exprToString (BoolLiteral False) = return "false"
+exprToString (CharLiteral c)     = return $ "'" <> quoteChar c <> "'"
+exprToString (StringLiteral s)   = return $
     "\"" <> T.concat (map quoteString s) <> "\""
 
 exprToString (StringConcat exprs) =
@@ -136,6 +140,12 @@ exprToString (ArrayLiteral exprs) = do
                            , lceGotType = t
                            , lceScope = scope
                            }
+
+exprToString (Conditional condition ifTrue ifFalse) = do
+    condition' <- exprToString condition
+    ifTrue'    <- exprToString ifTrue
+    ifFalse'   <- exprToString ifFalse
+    return $ "(" <> condition' <> " ? " <> ifTrue' <> " : " <> ifFalse' <> ")"
 
 exprToString (Funcall (ParamName name) args) =
     return $ T.pack name
@@ -323,11 +333,11 @@ localeOutput target locales = liftM T.unlines $ sequence $
 
 
 interfaceGetter,
- interfaceConstructor,
- interfaceLazyValue,
- interfaceValue,
- interfaceFunction
-  :: JavaTarget -> Int -> T.Text -> T.Text -> [Param] -> T.Text
+  interfaceConstructor,
+  interfaceLazyValue,
+  interfaceValue,
+  interfaceFunction
+    :: JavaTarget -> Int -> T.Text -> T.Text -> [Param] -> T.Text
 
 
 interfaceGetter target lvl returnType name _ =
@@ -371,9 +381,9 @@ interfaceFunction target lvl returnType name params =
 
 
 implementConstructor,
- implementFunction
-  :: JavaTarget -> Int -> T.Text -> T.Text -> [Param] -> (Int -> LC T.Text)
-  -> LC T.Text
+  implementFunction
+    :: JavaTarget -> Int -> T.Text -> T.Text -> [Param] -> (Int -> LC T.Text)
+    -> LC T.Text
 
 implementConstructor target lvl returnType name _ fexpr =
     T.concat <$> sequence

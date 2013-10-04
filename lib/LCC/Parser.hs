@@ -31,7 +31,7 @@ parseLocale filename fileContents =
 
 localeParser :: Parser RawLocale
 localeParser =
-  Locale <$> (Lex.whiteSpace *> Lex.symbol "locale" *> Lex.identifier)
+  Locale <$> (Lex.whiteSpace *> Lex.reserved "locale" *> Lex.identifier)
          <*> (Lex.colon *> many1 translationDataParser)
 
 translationDataParser :: Parser RawTranslationData
@@ -57,11 +57,15 @@ paramParser :: Parser Param
 paramParser = Param <$> typeParser <*> Lex.identifier
 
 exprParser :: Parser RawExpr
-exprParser = try (CharLiteral   <$> Lex.charLiteral)
-         <|> try (IntLiteral    <$> Lex.intLiteral)
+exprParser = try (IntLiteral    <$> Lex.intLiteral)
          <|> try (DoubleLiteral <$> Lex.floatLiteral)
+         <|> try (BoolLiteral   <$> Lex.boolLiteral)
+         <|> try (CharLiteral   <$> Lex.charLiteral)
          <|> try (parseString   =<< Lex.stringLiteral)
          <|> try (ArrayLiteral  <$> Lex.brackets (Lex.commaSep exprParser))
+         <|> try (Conditional   <$> (Lex.reserved "if"   *> exprParser)
+                                <*> (Lex.reserved "then" *> exprParser)
+                                <*> (Lex.reserved "else" *> exprParser))
          <|> try (Funcall       <$> pathIdentifier
                                 <*> (option [] $
                                       Lex.parens (Lex.commaSep exprParser)))
@@ -85,7 +89,7 @@ partialStringParser = try expr
        <?> "brace-enclosed expression"
 
     lit  = StringLiteral <$> many1 (try literalChar)
-       <?> "translation literal"
+       <?> "string literal"
 
     literalChar :: Parser Char
     literalChar = try (char '$' *> char '$')
@@ -103,10 +107,17 @@ pathIdentifier = RawAbsolutePath <$> ((:) <$> Lex.identifier
     relative = sepBy1 (Lex.symbol "^" <|> Lex.identifier) Lex.dot
 
 typeParser :: Parser Type
-typeParser = (TInt    <$ Lex.symbol "int")
-         <|> (TDouble <$ Lex.symbol "double")
-         <|> (TChar   <$ Lex.symbol "char")
-         <|> (TString <$ Lex.symbol "string")
-         <|> (TArray  <$> (typeParser <* Lex.symbol "[" <* Lex.symbol "]"))
-         <?> "type name"
+typeParser = rawTypeParser <**> (arrayTypeParser <|> pure id)
+         <?> "type"
+  where
+    rawTypeParser :: Parser Type
+    rawTypeParser = (TInt    <$ Lex.reserved "int")
+                <|> (TDouble <$ Lex.reserved "double")
+                <|> (TBool   <$ Lex.reserved "bool")
+                <|> (TChar   <$ Lex.reserved "char")
+                <|> (TString <$ Lex.reserved "string")
+                <?> "type name"
 
+    arrayTypeParser :: Parser (Type -> Type)
+    arrayTypeParser = TArray <$ Lex.symbol "[" <* Lex.symbol "]"
+                  <?> "array type"

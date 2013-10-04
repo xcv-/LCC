@@ -35,6 +35,7 @@ data LocaleError = LocaleParseError ParseError
                                    , lceScope :: Scope
                                    }
                  | LocaleSymbolNotFoundError Scope VarPath
+                 | LocaleCycleError [TranslationSignature]
                  | LocaleSignatureNotFoundError Scope VarPath [Type]
                  | LocaleInterfaceError Locale [TranslationSignature]
                  | LocalePathError String VarPath
@@ -169,6 +170,9 @@ data GenericExpr path = IntLiteral    Integer
                       | StringLiteral String
                       | StringConcat  [GenericExpr path]
                       | ArrayLiteral  [GenericExpr path]
+                      | Conditional   (GenericExpr path)
+                                      (GenericExpr path)
+                                      (GenericExpr path)
                       | Funcall       path [GenericExpr path]
     deriving (Ord, Eq, Show)
 

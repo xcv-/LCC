@@ -28,7 +28,7 @@ checkInterfaces :: [(Locale, LocaleState)]
                 -> Either LocaleError [(Locale, LocaleState)]
 checkInterfaces [] = Right []
 checkInterfaces states =
-    zipWithM applyCheck states (init $ cycle states)
+    zipWithM applyCheck states (tail $ cycle states)
   where
     applyCheck (lc1, st1) (lc2, st2) =
         case checkInterface st1 st2 of
@@ -39,9 +39,11 @@ checkInterfaces states =
 checkInterface :: LocaleState -> LocaleState
                -> ([TranslationSignature], [TranslationSignature])
 checkInterface st1 st2 =
-    let sigs1 = Set.toList $ envSignatures $ lcsEnv st1
-        sigs2 = Set.toList $ envSignatures $ lcsEnv st2
-    in (sigs2 \\ sigs1, sigs1 \\ sigs2)
+    (sigs2 \\ sigs1, sigs1 \\ sigs2)
+  where
+    sigs1 = Set.toList $ envSignatures $ lcsEnv st1
+    sigs2 = Set.toList $ envSignatures $ lcsEnv st2
+
 
 
 compile :: RawLocale -> LC Locale
@@ -80,11 +82,14 @@ verifyNameLookup lc@Locale { lcData=ld } = do
         inInnerScope td $ mapM_ (verifyNameLookup' known) nested
 
     verifyExprNameLookup :: Set.Set AbsVarPath -> Expr -> LC ()
+    verifyExprNameLookup known (StringConcat exprs) =
+        mapM_ (verifyExprNameLookup known) exprs
+
     verifyExprNameLookup known (ArrayLiteral exprs) =
         mapM_ (verifyExprNameLookup known) exprs
 
-    verifyExprNameLookup known (StringConcat exprs) =
-        mapM_ (verifyExprNameLookup known) exprs
+    verifyExprNameLookup known (Conditional condition ifTrue ifFalse) = do
+        mapM_ (verifyExprNameLookup known) [condition, ifTrue, ifFalse]
 
     verifyExprNameLookup known (Funcall path@(AbsolutePath path') args)
       | AbsVarPath path' `Set.member` known =
@@ -107,8 +112,14 @@ verifyNameLookup lc@Locale { lcData=ld } = do
 
 
 populateEnv :: Locale -> LC ()
-populateEnv lc = do
+populateEnv Locale { lcData=lcd } = do
     builtins <- Set.map sigPath . envSignatures <$> getEnv
+
+    populateEnv' builtins (concatMap flatten lcd)
+
+    -- Initial idea: Dependency graph. It can't infer lists properly yet, using
+    -- a dirty solution for now
+    {-builtins <- Set.map sigPath . envSignatures <$> getEnv
 
     let adaptNode (path, params, expr) = (path, (expr, params))
         nodes = map adaptNode flattened
@@ -118,10 +129,32 @@ populateEnv lc = do
     forM_ (sortGraph graph) $ \vert ->
         let ((expr, params), path, _) = fromVertex vert
             returnType = inScope (TranslationScope path params) $ inferType expr
-        in addEnv =<< Signature path params <$> returnType
+        in addEnv =<< Signature path params <$> returnType-}
   where
-    flattened :: [(AbsVarPath, [Param], Expr)]
-    flattened = concatMap flatten $ lcData lc
+    populateEnv' :: Set.Set AbsVarPath -> [(AbsVarPath, [Param], Expr)] -> LC ()
+    populateEnv' builtins [] = return ()
+    populateEnv' builtins unknownTranslations = do
+        new <- populateEnvIter unknownTranslations
+
+        if null new
+          then let adapt (path, params, _) = Signature path params TAny
+               in throwError $ LocaleCycleError (map adapt unknownTranslations)
+
+          else populateEnv' builtins (unknownTranslations \\ new)
+
+      where
+        populateEnvIter :: [(AbsVarPath, [Param], Expr)] -> LC [(AbsVarPath, [Param], Expr)]
+        populateEnvIter [] = return []
+        populateEnvIter (t@(path, params, expr) : ts) = do
+
+            returnType <- inScope (TranslationScope path params) $
+                            exprType (inferCommonType False) False expr
+
+            let rest = populateEnvIter ts
+
+            if returnType == TAny
+              then rest
+              else addEnv (Signature path params returnType) >> liftM (t:) rest
 
     flatten :: TranslationData -> [(AbsVarPath, [Param], Expr)]
     flatten td@NestedData { tdSubGroupName=name, tdNestedData=nested } =
@@ -155,6 +188,11 @@ makeAbsolute lc@Locale { lcData=ld } = do
     makeAbsoluteExpr (ArrayLiteral exprs) =
         ArrayLiteral <$> mapM makeAbsoluteExpr exprs
 
+    makeAbsoluteExpr (Conditional condition ifTrue ifFalse) =
+        Conditional <$> makeAbsoluteExpr condition
+                    <*> makeAbsoluteExpr ifTrue
+                    <*> makeAbsoluteExpr ifFalse
+
     makeAbsoluteExpr (Funcall path args) =
         Funcall <$> makeAbsolutePath path <*> mapM makeAbsoluteExpr args
 
@@ -187,60 +225,71 @@ typeCheck Locale { lcData = ld } = mapM_ typeCheck' ld
   where
     typeCheck' :: TranslationData -> LC ()
     typeCheck' td@Translation { tdImpl=impl } = do
-        inInnerScope td $ exprType checkTypesEqual impl
+        inInnerScope td $ exprType (checkTypesEqual True) True impl
         return ()
 
     typeCheck' td@NestedData { tdNestedData=nested } =
         inInnerScope td $ mapM_ typeCheck' nested
 
 inferType :: Expr -> LC Type
-inferType = exprType inferCommonType
+inferType = exprType (inferCommonType True) True
 
 
-exprType :: (Type -> [Expr] -> LC Type) -> Expr -> LC Type
-exprType _ (IntLiteral _)    = return TInt
-exprType _ (DoubleLiteral _) = return TDouble
-exprType _ (BoolLiteral _)   = return TBool
+exprType :: (Type -> [Expr] -> LC Type) -> Bool -> Expr -> LC Type
+exprType _ _ (IntLiteral _)    = return TInt
+exprType _ _ (DoubleLiteral _) = return TDouble
+exprType _ _ (BoolLiteral _)   = return TBool
 
-exprType _ (CharLiteral _)   = return TChar
-exprType _ (StringLiteral _) = return TString
+exprType _ _ (CharLiteral _)   = return TChar
+exprType _ _ (StringLiteral _) = return TString
 
-exprType fold (StringConcat exprs) = do
+exprType fold _ (StringConcat exprs) = do
     commonType <- fold TString exprs
     case commonType of
         TAny    -> return TString
         TString -> return TString
         other   -> throwError . LocaleTypeError TString other =<< getScope
 
-exprType fold (ArrayLiteral exprs) = TArray <$> fold TAny exprs
+exprType fold _ (ArrayLiteral exprs) = TArray <$> fold TAny exprs
 
-exprType fold (Funcall path args) = do
-    argTypes <- mapM (exprType fold) args
+exprType fold _ (Conditional condition ifTrue ifFalse) = do
+    fold TBool [condition]
+    fold TAny [ifTrue, ifFalse]
+
+exprType fold throw (Funcall path args) = do
+    argTypes <- mapM (exprType fold throw) args
     maybeSig <- findSignature path argTypes
+
     case maybeSig of
         Just sig -> return $ sigReturn sig
-        Nothing  -> throwError =<<
-            LocaleSignatureNotFoundError <$> getScope <*> pure path <*> pure argTypes
+
+        Nothing
+          | throw -> do scope <- getScope
+                        throwError $ LocaleSignatureNotFoundError scope path argTypes
+          | otherwise -> return TAny
 
 
-inferCommonType :: Type -> [Expr] -> LC Type
-inferCommonType TAny exprs =
-    foldl f TAny <$> mapM (exprType inferCommonType) exprs
+inferCommonType :: Bool -> Type -> [Expr] -> LC Type
+inferCommonType throw TAny exprs = do
+    types <- mapM (exprType (inferCommonType throw) throw) exprs
+    return $ foldl infer TAny types
   where
-    f TAny t = t
-    f t    _ = t
+    infer TAny t = t
+    infer t    _ = t
 
-inferCommonType expected _ = return expected
+inferCommonType _ expected _ = return expected
 
 
-checkTypesEqual :: Type -> [Expr] -> LC Type
-checkTypesEqual expected [] = return TAny
-checkTypesEqual expected exprs = do
-    (type0:types) <- mapM (exprType checkTypesEqual) exprs
-    foldM checkEqual type0 types
+checkTypesEqual :: Bool -> Type -> [Expr] -> LC Type
+checkTypesEqual _ expected [] = return TAny
+checkTypesEqual throw expected exprs = do
+    types <- mapM (exprType (checkTypesEqual throw) throw) exprs
+    foldM checkEqual expected types
   where
     checkEqual :: Type -> Type -> LC Type
-    checkEqual x y
+    checkEqual TAny y    = return y
+    checkEqual x    TAny = return x
+    checkEqual x    y
       | x == y    = return x
       | otherwise = getScope >>= throwError . LocaleTypeError x y
 
