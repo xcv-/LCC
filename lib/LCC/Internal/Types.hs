@@ -37,7 +37,7 @@ data LocaleError = LocaleParseError ParseError
                  | LocaleSymbolNotFoundError Scope VarPath
                  | LocaleCycleError [TranslationSignature]
                  | LocaleSignatureNotFoundError Scope VarPath [Type]
-                 | LocaleInterfaceError Locale [TranslationSignature]
+                 | LocaleInterfaceError String [TranslationSignature]
                  | LocalePathError String VarPath
                  | LocaleRelativePathError Scope RawVarPath
                  | LocaleError String

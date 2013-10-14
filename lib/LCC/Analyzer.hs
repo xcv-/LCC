@@ -33,8 +33,8 @@ checkInterfaces states =
     applyCheck (lc1, st1) (lc2, st2) =
         case checkInterface st1 st2 of
             ([],[]) -> Right (lc1, st1)
-            ([],missing) -> Left $ LocaleInterfaceError lc2 missing
-            (missing, _) -> Left $ LocaleInterfaceError lc1 missing
+            ([],missing) -> Left $ LocaleInterfaceError (lcName lc2) missing
+            (missing, _) -> Left $ LocaleInterfaceError (lcName lc1) missing
 
 checkInterface :: LocaleState -> LocaleState
                -> ([TranslationSignature], [TranslationSignature])

@@ -134,6 +134,9 @@ exprToString (CharLiteral c)     = return $ "'" <> quoteChar c <> "'"
 exprToString (StringLiteral s)   = return $
     "\"" <> T.concat (map quoteString s) <> "\""
 
+exprToString (StringConcat []) =
+    return "\"\""
+
 exprToString (StringConcat exprs) =
     T.intercalate " + " <$> mapM exprToString exprs
 
@@ -216,7 +219,7 @@ localeOutput target locales = liftM T.unlines $ sequence $
     exportInterface = fmap T.concat . mapM (interface 1) . lcData
     exportImplementation = implementation 1
 
-    postscript = "}"
+    postscript = localeArray 1 <> "}"
 
     -- Interface
     interface :: Int -> TranslationData -> LC T.Text
@@ -341,6 +344,14 @@ localeOutput target locales = liftM T.unlines $ sequence $
             ]
 
         iface = T.pack name
+
+    localeArray :: Int -> T.Text
+    localeArray lvl = ind <> "public static String[] _locales = {"
+                          <> T.intercalate ", " (map (quote . T.pack . lcName) locales)
+                          <> "};\n"
+      where
+        quote s = "\"" <> s <> "\""
+        ind = javaIndent target lvl
 
 
 interfaceGetter,

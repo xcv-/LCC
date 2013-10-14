@@ -31,8 +31,10 @@ parseLocale filename fileContents =
 
 localeParser :: Parser RawLocale
 localeParser =
-  Locale <$> (Lex.whiteSpace *> Lex.reserved "locale" *> Lex.identifier)
-         <*> (Lex.colon *> many1 translationDataParser)
+  Lex.whiteSpace *>
+    (Locale <$> (Lex.reserved "locale" *> Lex.identifier)
+            <*> (Lex.colon *> many1 translationDataParser))
+      <* eof
 
 translationDataParser :: Parser RawTranslationData
 translationDataParser = try nestedDataParser
@@ -78,7 +80,7 @@ parseString str =
         Left err -> unexpected "String parse error"
 
 stringParser :: Parser [RawExpr]
-stringParser = many1 partialStringParser <* eof
+stringParser = many partialStringParser <* eof
 
 partialStringParser :: Parser RawExpr
 partialStringParser = try expr

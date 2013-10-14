@@ -185,7 +185,7 @@ compileToJava indir outdir package = do
                    , J.javaExpandTab     = False
                    , J.javaDirname       = outdir
                    , J.javaPackage       = package
-                   , J.javaInterfaceName = dropTrailingPathSeparator indir
+                   , J.javaInterfaceName = last $ splitDirectories indir
                    }
 
     loadedLocales <- loadLocales target indir
