@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, RecordWildCards #-}
 module LCC.Internal.Types where
 
 import Control.Applicative
@@ -12,6 +12,7 @@ import Data.List
 import qualified Data.Set as Set
 
 import Text.Parsec.Error (ParseError)
+import Text.Printf (printf)
 
 
 newtype LC a = LC (StateT LocaleState (ErrorT LocaleError Identity) a)
@@ -30,23 +31,62 @@ data LocaleState = LocaleState
     }
 
 data LocaleError = LocaleParseError ParseError
+
+                 | LocalePathError Scope String VarPath
+                 | LocaleRelativePathError Scope RawVarPath
+
                  | LocaleTypeError { lceExpectedType :: Type
                                    , lceGotType :: Type
                                    , lceScope :: Scope
                                    }
+
                  | LocaleSymbolNotFoundError Scope VarPath
-                 | LocaleCycleError [TranslationSignature]
                  | LocaleSignatureNotFoundError Scope VarPath [Type]
+                 | LocaleSignatureConflictError [TranslationSignature]
+
+                 | LocaleCycleError [TranslationSignature]
                  | LocaleInterfaceError String [TranslationSignature]
-                 | LocalePathError String VarPath
-                 | LocaleRelativePathError Scope RawVarPath
+
                  | LocaleError String
                  | LocaleUnknownError
-    deriving (Show)
 
 instance Error LocaleError where
   noMsg = LocaleUnknownError
   strMsg = LocaleError
+
+instance Show LocaleError where
+  show (LocaleParseError parseError) =
+      show parseError
+
+  show (LocalePathError scope message path) =
+      printf "In %s: Path error on %s: %s" (show scope) (show path) message
+
+  show (LocaleRelativePathError scope rawPath) =
+      printf "In %s: Invalid relative path %s" (show scope) (show rawPath)
+
+  show LocaleTypeError {..} =
+      printf "In %s: Type error: Expected type '%s' but found '%s'"
+          (show lceScope) (show lceExpectedType) (show lceGotType)
+
+  show (LocaleSymbolNotFoundError scope path) =
+      printf "In %s: Symbol not found: %s" (show scope) (show path)
+
+  show (LocaleSignatureNotFoundError scope path paramTypes) =
+      printf "In %s: Signature not found: %s(%s)"
+          (show scope) (show path) (intercalate ", " $ map show paramTypes)
+
+  show (LocaleSignatureConflictError signatures) =
+      intercalate "\n" $ "Found conflicting signatures:" : map show signatures
+
+  show (LocaleCycleError signatures) =
+      intercalate "\n" $ "Dependency cycle found:" : map show signatures
+
+  show (LocaleInterfaceError localeName missing) =
+      intercalate "\n" $ ("Missing signatures in " ++ show localeName) : map show missing
+
+  show (LocaleError message) = message
+
+  show LocaleUnknownError = "(unknown)"
 
 
 type Locale = GenericLocale VarPath
@@ -181,7 +221,15 @@ data GenericExpr path = IntLiteral    Integer
 
 data Scope = TranslationScope AbsVarPath [Param]
            | SubGroupScope AbsVarPath
-    deriving (Eq, Show)
+    deriving (Eq)
+
+instance Show Scope where
+  show (TranslationScope path params) =
+      printf "%s(%s)" (show path) (intercalate ", " $ map show params)
+
+  show (SubGroupScope path) =
+      printf "%s{}" (show path)
+
 
 newtype Env = Env { envSignatures :: Set.Set TranslationSignature }
     deriving (Eq, Ord, Show)

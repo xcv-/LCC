@@ -1,3 +1,4 @@
+{-# LANGUAGE ViewPatterns #-}
 module Main where
 
 import Control.Applicative
@@ -7,6 +8,8 @@ import Control.Monad.Error
 import System.Directory
 import System.Environment
 import System.FilePath
+
+import Text.Printf (printf)
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -19,11 +22,7 @@ import LCC.Target
 import qualified LCC.Output.Java as J
 
 
-compileLocales :: Target t => t -> [RawLocale] -> [LC Locale]
-compileLocales target = map process
-  where
-    process :: RawLocale -> LC Locale
-    process locale = setEnv target >> compile locale
+type LocaleErrorPair = (Maybe RawLocale, LocaleError)
 
 
 parseLocales :: FilePath -> IO [Either LocaleError RawLocale]
@@ -39,33 +38,35 @@ parseLocales directory = do
         map (dir </>) <$> getDirectoryContents dir >>= filterM doesFileExist
 
 
-loadLocales :: Target t => t -> FilePath -> IO [LC Locale]
-loadLocales target directory = do
-    parsedLocales <- parseLocales directory
+compileLocale :: Target t => t
+              -> RawLocale
+              -> Either LocaleErrorPair (Locale, LocaleState)
+compileLocale target locale =
+    case runLocale emptyState compiled of
+        Right x -> Right x
+        Left e  -> Left (Just locale, e)
+  where
+    compiled = setEnv target >> compile locale
 
-    case compileLocales target <$> sequence parsedLocales of
-        Right compiledLocales  -> return compiledLocales
-        Left err -> return [throwError err]
 
-
-applyOutput :: Target t => t
-            -> [LC Locale]
-            -> Either LocaleError [(FilePath, T.Text)]
-applyOutput target locales =
-    case checkInterfaces =<< mapM (runLocale emptyState) locales of
-        Right [] -> Right []
-        Left e -> Left e
-
-        Right checkedLocales@((_,st0):_) ->
-            fst <$> runLocale st0 (output target $ map fst checkedLocales)
-
+loadLocales :: Target t => t
+            -> FilePath
+            -> IO (Either LocaleErrorPair [(Locale, LocaleState)])
+loadLocales target directory =
+    mapM applyCompile <$> parseLocales directory
+  where
+    applyCompile :: Either LocaleError RawLocale
+                 -> Either (Maybe RawLocale, LocaleError) (Locale, LocaleState)
+    applyCompile (Right locale) = compileLocale target locale
+    applyCompile (Left err)     = Left (Nothing, err)
 
 
 writeOutput :: FilePath -> T.Text -> IO ()
 writeOutput path content = do
-    putStrLn $ "Generated " ++ path
+    putStrLn $ "Generating " ++ path
     createDirectoryIfMissing True (takeDirectory path)
     T.writeFile path content
+    putStrLn "Done."
 
 
 main :: IO ()
@@ -178,24 +179,37 @@ printTopicHelp topic = do
 printParsed :: FilePath -> IO ()
 printParsed indir = mapM_ print =<< parseLocales indir
 
-compileToJava :: FilePath -> FilePath -> String -> IO ()
-compileToJava indir outdir package = do
-    let target = J.JavaTarget
-                   { J.javaTabWidth      = 4
-                   , J.javaExpandTab     = False
-                   , J.javaDirname       = outdir
-                   , J.javaPackage       = package
-                   , J.javaInterfaceName = last $ splitDirectories indir
-                   }
 
-    loadedLocales <- loadLocales target indir
-
-    case applyOutput target loadedLocales of
-        Right results -> mapM_ (uncurry writeOutput) results
-        Left e -> print e
-
+compileGeneric :: Target t => FilePath -> t -> IO ()
+compileGeneric indir target =
+    loadLocales target indir >>= either printErrorPair process
   where
-    prettyPrint (file, content) = do
-        putStrLn $ "// " ++ file
-        T.putStrLn content
-        putStrLn ""
+    process :: [(Locale, LocaleState)] -> IO ()
+    process = either printError writeAll . (checkInterfaces >=> runOutput)
+
+    runOutput :: [(Locale, LocaleState)] -> Either LocaleError [(FilePath, T.Text)]
+    runOutput [] = return []
+    runOutput (unzip -> (lcs, st0:_)) = fst <$> runLocale st0 (output target lcs)
+
+    writeAll :: [(FilePath, T.Text)] -> IO ()
+    writeAll = mapM_ (uncurry writeOutput)
+
+    printError e   = printErrorPair (Nothing, e)
+    printErrorPair = putStrLn . formatErrorPair
+
+    formatErrorPair (Nothing, e) = "\n*** Error ***\n" ++ show e
+    formatErrorPair (Just lc, e) = "\n*** Error in " ++ lcName lc ++ " ***\n"
+                                   ++ show e
+
+
+compileToJava :: FilePath -> FilePath -> String -> IO ()
+compileToJava indir outdir package =
+    compileGeneric indir
+      J.JavaTarget
+        { J.javaTabWidth      = 4
+        , J.javaExpandTab     = False
+        , J.javaDirname       = outdir
+        , J.javaPackage       = package
+        , J.javaInterfaceName = last $ splitDirectories indir
+        }
+

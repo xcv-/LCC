@@ -76,7 +76,7 @@ findSignatures (AbsolutePath path) =
     map toVarPath <$> findGlobalSignatures (AbsVarPath path)
   where
     toVarPath sig@Signature { sigPath=(AbsVarPath path) } =
-        sig { sigPath=(AbsolutePath path) }
+        sig { sigPath=AbsolutePath path }
 
 findSignatures (ParamName name) = do
     scope <- getScope
@@ -129,8 +129,9 @@ inInnerScope Translation { tdKey=key, tdParams=params } m = do
         Just newPath -> inScope (TranslationScope newPath params) m
         Nothing      ->
             let (AbsVarPath path) = scopePath scope
-            in throwError $ LocalePathError ("Cannot navigate to " ++ key)
-                                         (AbsolutePath path)
+            in throwError $ LocalePathError scope
+                                            ("Cannot navigate to " ++ key)
+                                            (AbsolutePath path)
 
 inInnerScope  NestedData { tdSubGroupName=name } m = do
     scope <- getScope
@@ -138,8 +139,9 @@ inInnerScope  NestedData { tdSubGroupName=name } m = do
         Just newPath -> inScope (SubGroupScope newPath) m
         Nothing      ->
             let (AbsVarPath path) = scopePath scope
-            in throwError $ LocalePathError ("Cannot navigate to " ++ name)
-                                         (AbsolutePath path)
+            in throwError $ LocalePathError scope
+                                            ("Cannot navigate to " ++ name)
+                                            (AbsolutePath path)
 
 
 -- Environment

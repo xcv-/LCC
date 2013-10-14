@@ -147,11 +147,19 @@ populateEnv Locale { lcData=lcd } =
         returnType <- inScope (TranslationScope path params) $
                         exprType (inferCommonType False) False expr
 
+        matchingSignatures <- findGlobalSignatures path
+
+        let newSignature = Signature path params returnType
+
+        unless (null matchingSignatures) $
+            let related = newSignature : matchingSignatures
+            in throwError (LocaleSignatureConflictError related)
+
         let rest = populateEnvIter ts
 
         if returnType == TAny
           then rest
-          else addEnv (Signature path params returnType) >> liftM (t:) rest
+          else addEnv newSignature >> liftM (t:) rest
 
 
 flatten :: TranslationData -> [(AbsVarPath, [Param], Expr)]
