@@ -71,7 +71,7 @@ collectPaths lc = Set.fromList . concatMap (collectPaths' []) $ lcData lc
 verifyNameLookup :: Locale -> LC ()
 verifyNameLookup lc@Locale { lcData=ld } = do
     builtins <- Set.map sigPath . envSignatures <$> getEnv
-    let known = Set.union (collectPaths lc) builtins
+    let known = collectPaths lc `Set.union` builtins
     mapM_ (verifyNameLookup' known) ld
   where
     verifyNameLookup' :: Set.Set AbsVarPath -> TranslationData -> LC ()
@@ -88,7 +88,7 @@ verifyNameLookup lc@Locale { lcData=ld } = do
     verifyExprNameLookup known (ArrayLiteral exprs) =
         mapM_ (verifyExprNameLookup known) exprs
 
-    verifyExprNameLookup known (Conditional condition ifTrue ifFalse) = do
+    verifyExprNameLookup known (Conditional condition ifTrue ifFalse) =
         mapM_ (verifyExprNameLookup known) [condition, ifTrue, ifFalse]
 
     verifyExprNameLookup known (Funcall path@(AbsolutePath path') args)
@@ -127,9 +127,8 @@ forM_ (sortGraph graph) $ \vert ->
     in addEnv =<< Signature path params <$> returnType-}
 
 populateEnv :: Locale -> LC ()
-populateEnv Locale { lcData=lcd } = do
+populateEnv Locale { lcData=lcd } =
     populateEnv' $ concatMap flatten lcd
-
   where
     populateEnv' :: [(AbsVarPath, [Param], Expr)] -> LC ()
     populateEnv' [] = return ()
@@ -291,4 +290,3 @@ checkTypesEqual throw expected exprs = do
     checkEqual x    y
       | x == y    = return x
       | otherwise = getScope >>= throwError . LocaleTypeError x y
-

@@ -87,7 +87,7 @@ lccDef = Tok.LanguageDef
   , Tok.identLetter    = P.alphaNum P.<|> P.char '_'
   , Tok.opStart        = P.oneOf ""
   , Tok.opLetter       = P.oneOf ""
-  , Tok.reservedNames  = foldl1' union [ (Tok.reservedNames Lang.haskellDef)
+  , Tok.reservedNames  = foldl1' union [ Tok.reservedNames Lang.haskellDef
                                        , lcKeywords
                                        , javaKeywords
                                        , cppKeywords

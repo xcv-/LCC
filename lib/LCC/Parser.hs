@@ -49,8 +49,8 @@ nestedDataParser =
 translationParser :: Parser RawTranslationData
 translationParser =
   Translation <$> (Lex.identifier <* Lex.colon)
-              <*> (option [] $
-                    Lex.parens (Lex.commaSep1 paramParser) <* Lex.symbol "->")
+              <*> option []
+                    (Lex.parens (Lex.commaSep1 paramParser) <* Lex.symbol "->")
               <*> exprParser
 
 paramParser :: Parser Param
@@ -67,8 +67,8 @@ exprParser = try (IntLiteral    <$> Lex.intLiteral)
                                 <*> (Lex.reserved "then" *> exprParser)
                                 <*> (Lex.reserved "else" *> exprParser))
          <|> try (Funcall       <$> pathIdentifier
-                                <*> (option [] $
-                                      Lex.parens (Lex.commaSep exprParser)))
+                                <*> option []
+                                      (Lex.parens $ Lex.commaSep exprParser))
          <?> "expression"
 
 parseString :: String -> Parser RawExpr
@@ -99,7 +99,7 @@ partialStringParser = try expr
 
 pathIdentifier :: Parser RawVarPath
 pathIdentifier = RawAbsolutePath <$> ((:) <$> Lex.identifier
-                                          <*> (option [] $ Lex.dot *> relative))
+                                          <*> option [] (Lex.dot *> relative))
              <|> RawParamName    <$> (char '@' *> Lex.identifier)
              <|> RawRelativePath <$> relative
              <?> "variable path"

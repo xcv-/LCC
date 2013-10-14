@@ -148,11 +148,11 @@ data AbsVarPath = AbsVarPath [String]
 instance Show RawVarPath where
   show (RawAbsolutePath path) = intercalate "." path
   show (RawRelativePath path) = intercalate "." path
-  show (RawParamName name) = "@" ++ name
+  show (RawParamName name) = '@' : name
 
 instance Show VarPath where
   show (AbsolutePath path) = intercalate "." path
-  show (ParamName name) = "@" ++ name
+  show (ParamName name) = '@' : name
 
 instance Show AbsVarPath where
   show (AbsVarPath path) = intercalate "." path

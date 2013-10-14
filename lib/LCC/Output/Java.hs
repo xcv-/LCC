@@ -145,7 +145,7 @@ exprToString (ArrayLiteral exprs) = do
             return $ "new " <> javaType elemType <> "[] { " <> inner <> " }"
         t -> do
             scope <- getScope
-            throwError $ LocaleTypeError
+            throwError LocaleTypeError
                            { lceExpectedType = TArray TAny
                            , lceGotType = t
                            , lceScope = scope
@@ -199,9 +199,10 @@ exprToString (Funcall fpath@(AbsolutePath path) args) =
 
 localeOutput :: JavaTarget -> [Locale] -> LC T.Text
 localeOutput target locales = liftM T.unlines $ sequence $
-    [return preamble] ++
+    return preamble :
 
-    exportInterface (head locales) : map exportImplementation locales ++
+    exportInterface (head locales) :
+    map exportImplementation locales ++
 
     [return postscript]
   where
@@ -330,7 +331,7 @@ localeOutput target locales = liftM T.unlines $ sequence $
       where
         apply f = f target lvl iface (T.pack name) [] fexpr
 
-        fexpr lvl2 = do
+        fexpr lvl2 =
           T.concat <$> sequence
             [ return $ "new " <> iface <> "() {\n"
 

@@ -51,7 +51,7 @@ loadLocales target directory = do
 applyOutput :: Target t => t
             -> [LC Locale]
             -> Either LocaleError [(FilePath, T.Text)]
-applyOutput target locales = do
+applyOutput target locales =
     case checkInterfaces =<< mapM (runLocale emptyState) locales of
         Right [] -> Right []
         Left e -> Left e
@@ -106,7 +106,7 @@ printHelp = do
 
 
 printTopicHelp :: String -> IO ()
-printTopicHelp "lc-lang" = do
+printTopicHelp "lc-lang" =
     putStrLn . unlines $
       [ "LC is a simple declarative language for static application localization."
       , "It compiles directly to units of a given output language so it can be"
@@ -176,8 +176,7 @@ printTopicHelp topic = do
 
 
 printParsed :: FilePath -> IO ()
-printParsed indir = do
-    mapM_ print =<< parseLocales indir
+printParsed indir = mapM_ print =<< parseLocales indir
 
 compileToJava :: FilePath -> FilePath -> String -> IO ()
 compileToJava indir outdir package = do
