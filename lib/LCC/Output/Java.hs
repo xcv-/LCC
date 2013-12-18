@@ -44,6 +44,32 @@ builtins = Map.fromList $ builtinMap
     , (["str"], [TInt   ], TString, "Integer.toString"  )
     , (["str"], [TDouble], TString, "Double.toString"   )
     , (["str"], [TBool  ], TString, "Boolean.toString"  )
+
+    , (["eq"], [TChar,   TChar],   TBool, "_Builtins.eq")
+    , (["eq"], [TString, TString], TBool, "_Builtins.eq")
+    , (["eq"], [TInt,    TInt],    TBool, "_Builtins.eq")
+    , (["eq"], [TDouble, TDouble], TBool, "_Builtins.eq")
+    , (["eq"], [TBool,   TBool],   TBool, "_Builtins.eq")
+
+    , (["upper"], [TChar],   TChar,   "Character.toUpperCase")
+    , (["lower"], [TChar],   TChar,   "_Builtins.toLowerCase")
+
+    , (["upper"], [TString], TString, "_Builtins.toUpper"   )
+    , (["lower"], [TString], TString, "_Builtins.toLower"   )
+
+    , (["capitalize"], [TString], TString, "_Builtins.capitalize")
+
+    , (["dynamicChar"],    [TString], TString, "_Builtins.getDynamicCharacter")
+    , (["dynamicString"],  [TString], TString, "_Builtins.getDynamicString"   )
+    , (["dynamicInt"],     [TString], TString, "_Builtins.getDynamicInteger"  )
+    , (["dynamicDouble"],  [TString], TString, "_Builtins.getDynamicDouble"   )
+    , (["dynamicBoolean"], [TString], TString, "_Builtins.getDynamicBoolean"  )
+
+    , (["hasDynamicChar"],    [TString], TBool, "_Builtins.hasDynamicCharacter")
+    , (["hasDynamicString"],  [TString], TBool, "_Builtins.hasDynamicString"   )
+    , (["hasDynamicInt"],     [TString], TBool, "_Builtins.hasDynamicInteger"  )
+    , (["hasDynamicDouble"],  [TString], TBool, "_Builtins.hasDynamicDouble"   )
+    , (["hasDynamicBoolean"], [TString], TBool, "_Builtins.hasDynamicBoolean"  )
     ]
   where
     builtinMap = map $ \(path, paramTypes, ret, replacement) ->
@@ -53,6 +79,71 @@ builtins = Map.fromList $ builtinMap
                     }
         , replacement
         )
+
+
+builtinsClass :: JavaTarget -> Int -> T.Text
+builtinsClass target lvl = makeClass
+    [ method "boolean" "eq" ["String s1",  "String s2" ] "s1.equals(s2)"
+    , method "boolean" "eq" ["char c1",    "char c2"   ] "c1 == c2"
+    , method "boolean" "eq" ["int x1",     "int x2"    ] "x1 == x2"
+    , method "boolean" "eq" ["double d1",  "double d2" ] "d1 == d2"
+    , method "boolean" "eq" ["boolean b1", "boolean b2"] "b1 == b2"
+
+    , method "String" "upper"      ["String s"] "s.toUpperCase()"
+    , method "String" "lower"      ["String s"] "s.toLowerCase()"
+    , method "String" "capitalize" ["String s"] "s.length() < 1 ?\
+                                                  \ s :\
+                                                  \ s.charAt(0) + s.substring(1)"
+    , getDynamic "String"
+    , getDynamic "char"
+    , getDynamic "int"
+    , getDynamic "double"
+    , getDynamic "boolean"
+
+    , hasDynamic "String"
+    , hasDynamic "char"
+    , hasDynamic "int"
+    , hasDynamic "double"
+    , hasDynamic "boolean"
+
+    , addDynamic
+    ]
+  where
+    makeClass methods =
+        javaIndent target lvl
+            <> "public static class _Builtins {\n"
+            <> javaIndent target (lvl+1)
+                <> "private static Map<String, Object> dynamics =\
+                       \ new HashMap<String, Object>();\n\n"
+            <> T.unlines methods
+        <> javaIndent target lvl
+            <> "}\n"
+
+    method ret name params expr =
+        javaIndent target (lvl+1)
+            <> "public static " <> ret <> " " <> name
+            <> "(" <> T.intercalate ", " params <> ") {\n"
+            <> javaIndent target (lvl+2)
+                <> "return " <> expr <> ";\n"
+        <> javaIndent target (lvl+1)
+            <> "}"
+
+    getDynamic t =
+        method t ("getDynamic" <> javaBoxed t) ["String name"] $
+            "(" <> javaBoxed t <> ") dynamics.get(name)"
+
+    hasDynamic t =
+        method "boolean" ("hasDynamic" <> javaBoxed t) ["String name"] $
+            "dynamics.get(name) instanceof " <> javaBoxed t
+
+    addDynamic =
+        javaIndent target (lvl+1)
+            <> "public static void addDynamic(String name, Object value) {\n"
+            <> javaIndent target (lvl+2)
+                <> "dynamics.put(name, value);\n"
+        <> javaIndent target (lvl+1)
+            <> "}"
+
 
 isBuiltin :: AbsVarPath -> [Type] -> Bool
 isBuiltin path paramTypes =
@@ -87,6 +178,7 @@ javaBoxed "boolean" = "Boolean"
 javaBoxed "byte"    = "Byte"
 javaBoxed "char"    = "Character"
 javaBoxed "float"   = "Float"
+javaBoxed "double"  = "Double"
 javaBoxed "int"     = "Integer"
 javaBoxed "long"    = "Long"
 javaBoxed "short"   = "Short"
@@ -211,6 +303,9 @@ localeOutput target locales = liftM T.unlines $ sequence $
   where
     preamble = "package " <> package <> ";\n"
             <> "\n"
+            <> "import java.util.Map;\n"
+            <> "import java.util.HashMap;\n"
+            <> "\n"
             <> "public abstract class " <> iface <> " {\n"
       where
         package = T.pack $ javaPackage target
@@ -219,7 +314,7 @@ localeOutput target locales = liftM T.unlines $ sequence $
     exportInterface = fmap T.concat . mapM (interface 1) . lcData
     exportImplementation = implementation 1
 
-    postscript = localeArray 1 <> "}"
+    postscript = localeArray 1 <> "\n" <> builtinsClass target 1 <> "}"
 
     -- Interface
     interface :: Int -> TranslationData -> LC T.Text
@@ -280,18 +375,22 @@ localeOutput target locales = liftM T.unlines $ sequence $
     implementation :: Int -> Locale -> LC T.Text
     implementation lvl locale =
         T.concat <$> sequence
-          [ return $ ind <> signature <> " = " <> "new " <> iface <> "() {\n"
+          [ return $ ind <> signature <> " {\n"
 
-          , dataImplementation (lvl+1) (lcData locale)
+          , return $ ind2 <> "return new " <> iface <> "() {\n"
 
-          , return $ ind <> "};\n"
+          , dataImplementation (lvl+2) (lcData locale)
+
+          , return $ ind2 <> "};\n"
+          , return $ ind <> "}\n"
           ]
       where
-        signature = "public static final " <> iface <> " " <> name
+        signature = "public static " <> iface <> " new_" <> name <> "()"
 
         iface = T.pack $ javaInterfaceName target
         name = T.pack $ lcName locale
         ind = javaIndent target lvl
+        ind2 = javaIndent target (lvl+1)
 
 
     dataImplementation :: Int -> [TranslationData] -> LC T.Text
@@ -364,7 +463,7 @@ interfaceGetter,
 
 interfaceGetter target lvl returnType name _ =
     ind 0 <> "protected final " <> returnType <> " " <> getter name <> "() {\n" <>
-    ind 1 <>   "return " <> lazy name <> " != null \n"                          <>
+    ind 1 <>   "return " <> lazy name <> " != null\n"                           <>
     ind 2 <>     "? "  <> lazy name                                   <>   "\n" <>
     ind 2 <>     ": (" <> lazy name <> " = " <> call constructor name <> ");\n" <>
     ind 0 <> "}\n"
@@ -401,7 +500,6 @@ interfaceFunction target lvl returnType name params =
     ind = javaIndent target lvl
 
 
-
 implementConstructor,
   implementFunction
     :: JavaTarget -> Int -> T.Text -> T.Text -> [Param] -> (Int -> LC T.Text)
@@ -436,7 +534,6 @@ implementFunction target lvl returnType name params fexpr =
 
     ind = javaIndent target lvl
     ind2 = javaIndent target (lvl+1)
-
 
 
 instance Target JavaTarget where
