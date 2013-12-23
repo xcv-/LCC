@@ -91,9 +91,9 @@ builtinsClass target lvl = makeClass
 
     , method "String" "upper"      ["String s"] "s.toUpperCase()"
     , method "String" "lower"      ["String s"] "s.toLowerCase()"
-    , method "String" "capitalize" ["String s"] "s.length() < 1 ?\
-                                                  \ s :\
-                                                  \ s.charAt(0) + s.substring(1)"
+    , method "String" "capitalize" ["String s"]
+        "s.length() < 1? s : Character.toUpperCase(s.charAt(0)) + s.substring(1)"
+
     , getDynamic "String"
     , getDynamic "char"
     , getDynamic "int"
