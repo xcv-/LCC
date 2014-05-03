@@ -89,8 +89,8 @@ builtinsClass target lvl = makeClass
     , method "boolean" "eq" ["double d1",  "double d2" ] "d1 == d2"
     , method "boolean" "eq" ["boolean b1", "boolean b2"] "b1 == b2"
 
-    , method "String" "upper"      ["String s"] "s.toUpperCase()"
-    , method "String" "lower"      ["String s"] "s.toLowerCase()"
+    , method "String" "toUpper"    ["String s"] "s.toUpperCase()"
+    , method "String" "toLower"    ["String s"] "s.toLowerCase()"
     , method "String" "capitalize" ["String s"]
         "s.length() < 1? s : Character.toUpperCase(s.charAt(0)) + s.substring(1)"
 
@@ -217,6 +217,10 @@ quoteString '"' = "\\\""
 quoteString c = quote c
 
 
+removeCommonPrefix :: Eq a => [a] -> [a] -> [a]
+removeCommonPrefix xs = fst . unzip . dropWhile (uncurry (==)) . zip xs
+
+
 exprToString :: Expr -> LC T.Text
 exprToString (IntLiteral i)      = return $ T.pack $ show i
 exprToString (DoubleLiteral d)   = return $ T.pack $ show d
@@ -255,8 +259,11 @@ exprToString (Conditional condition ifTrue ifFalse) = do
 exprToString (Funcall (ParamName name) args) =
     return $ T.pack name
 
-exprToString (Funcall fpath@(AbsolutePath path) []) =
-    return $ T.intercalate "." $ map (call getter . T.pack) path
+exprToString (Funcall fpath@(AbsolutePath path) []) = do
+    AbsVarPath scp <- getScopePath
+
+    let relPath = removeCommonPrefix path scp
+    return . T.intercalate "." . map (call getter . T.pack) $ relPath
 
 exprToString (Funcall fpath@(AbsolutePath path) args) =
     T.concat <$> liftM2 (:) path' argList
@@ -264,9 +271,11 @@ exprToString (Funcall fpath@(AbsolutePath path) args) =
     path' :: LC T.Text
     path' = do
         isBuiltin <- (`Map.member` builtins) <$> signature
+        AbsVarPath scp <- getScopePath
+
         if isBuiltin
           then (builtins Map.!) <$> signature
-          else return $ fmtPath path
+          else return $ fmtPath (removeCommonPrefix path scp)
 
     argList :: LC [T.Text]
     argList = sequence [return "(", args', return ")"]
