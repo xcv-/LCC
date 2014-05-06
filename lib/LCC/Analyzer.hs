@@ -2,6 +2,8 @@ module LCC.Analyzer
   ( checkInterfaces
   , compile
   , inferType
+  , toImpl
+  , fromImpl
   ) where
 
 import Control.Applicative hiding ((<|>), many)
@@ -17,7 +19,6 @@ import qualified Data.Set as Set
 import Text.Parsec
 
 import LCC.Internal.Types
-import qualified LCC.Lexer as Lex
 
 import LCC.Parser
 import LCC.State
@@ -162,6 +163,55 @@ populateEnv Locale { lcData=lcd } =
           else addEnv newSignature >> liftM (t:) rest
 
 
+fromImpl :: LocaleImpl -> LC Locale
+fromImpl (LocaleImpl name impl) = do
+    Locale name <$> fromImplEnv
+  where
+    fromImplEnv :: LC TranslationData
+    fromImplEnv =
+        case partition (\node -> node^._1.absPath.length == 1) of
+            ([], nested) -> do
+                groupBy ((==) `on` (\node -> node^._1.absPath.folding tail)
+
+
+
+    asList :: [LocaleImplEnvNode]
+    asList = map joinKV $ Map.fromList impl
+
+    joinKV :: ((AbsVarPath, [Type]), ([Param], Expr))
+           -> (AbsVarPath, [Param], Expr)
+    joinKV ((path, types), (params, impl)) =
+        (path, params, impl)
+
+
+toImpl :: Locale -> LC LocaleImpl
+toImpl Locale { lcName=name, lcData=d } =
+    LocaleImpl name <$> getImplEnv
+  where
+    toImplEnv :: LC LocaleImplEnv
+    toImplEnv = Map.fromList <$> map splitKV (walk d)
+
+    splitKV (path, params, impl) =
+        ((path, map paramType params), (params, impl)
+
+    walk :: LC [LocaleImplEnvNode]
+    walk td@NestedData { tdSubGroupName = n, tdNestedData = nd } =
+        inInnerScope td $ do
+            concat <$> mapM walk nd
+
+    walk td@Translation { tdKey = k, tdParams = ps, tdImpl = impl } =
+        inInnerScope td $ do
+            node <- envNode impl
+            return [node]
+
+    envNode :: Expr -> LC LocaleImplEnvNode
+    envNode impl = do
+        TranslationScope path params <- getScope
+
+        (path, params, impl)
+
+
+
 flatten :: TranslationData -> [(AbsVarPath, [Param], Expr)]
 flatten td@NestedData { tdSubGroupName=name, tdNestedData=nested } =
     concatMap (map (append name) . flatten) nested
@@ -237,11 +287,17 @@ typeCheck Locale { lcData = ld } = mapM_ typeCheck' ld
     typeCheck' td@NestedData { tdNestedData=nested } =
         inInnerScope td $ mapM_ typeCheck' nested
 
-inferType :: Expr -> LC Type
+inferType :: (MonadState LocaleState m, MonadError LocaleError m)
+          => Expr
+          -> m Type
 inferType = exprType (inferCommonType True) True
 
 
-exprType :: (Type -> [Expr] -> LC Type) -> Bool -> Expr -> LC Type
+exprType :: (MonadState LocaleState m, MonadError LocaleError m)
+         => (Type -> [Expr] -> m Type)
+         -> Bool
+         -> Expr
+         -> m Type
 exprType _ _ (IntLiteral _)    = return TInt
 exprType _ _ (DoubleLiteral _) = return TDouble
 exprType _ _ (BoolLiteral _)   = return TBool

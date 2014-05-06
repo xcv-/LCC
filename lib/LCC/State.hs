@@ -37,6 +37,7 @@ import qualified Data.Set as Set
 import LCC.Internal.Types
 
 
+
 emptyState :: LocaleState
 emptyState = LocaleState { lcsScope = topLevelScope
                          , lcsEnv = emptyEnv
@@ -59,19 +60,26 @@ matchParams :: [Type] -> GenericSignature p -> Bool
 matchParams types signature = map paramType (sigParams signature) == types
 
 
-findGlobalSignatures :: AbsVarPath -> LC [TranslationSignature]
+findGlobalSignatures :: MonadState LocaleState m
+                     => AbsVarPath
+                     -> m [TranslationSignature]
 findGlobalSignatures path =
     filter (\sig -> sigPath sig == path) <$> signatures
   where
-    signatures :: LC [TranslationSignature]
+    signatures :: MonadState LocaleState m => m [TranslationSignature]
     signatures = Set.toList . envSignatures <$> getEnv
 
-findGlobalSignature :: AbsVarPath -> [Type] -> LC (Maybe TranslationSignature)
+findGlobalSignature :: MonadState LocaleState m
+                    => AbsVarPath
+                    -> [Type]
+                    -> m (Maybe TranslationSignature)
 findGlobalSignature path paramTypes =
     find (matchParams paramTypes) <$> findGlobalSignatures path
 
 
-findSignatures :: VarPath -> LC [SymbolSignature]
+findSignatures :: MonadState LocaleState m
+               => VarPath
+               -> m [SymbolSignature]
 findSignatures (AbsolutePath path) =
     map toVarPath <$> findGlobalSignatures (AbsVarPath path)
   where
@@ -85,7 +93,11 @@ findSignatures (ParamName name) = do
         TranslationScope _ params  ->
             return . map paramSignature . filterParams name $ params
 
-findSignature :: VarPath -> [Type] -> LC (Maybe SymbolSignature)
+
+findSignature :: MonadState LocaleState m
+              => VarPath
+              -> [Type]
+              -> m (Maybe SymbolSignature)
 findSignature path paramTypes =
     find (matchParams paramTypes) <$> findSignatures path
 
@@ -105,16 +117,16 @@ appendedToScopePath name (SubGroupScope (AbsVarPath path)) =
     Just $ AbsVarPath (path ++ [name])
 
 
-getScope :: LC Scope
+getScope :: MonadState LocaleState m => Scope
 getScope = lcsScope <$> get
 
-getScopePath :: LC AbsVarPath
+getScopePath :: MonadState LocaleState m => m AbsVarPath
 getScopePath = scopePath <$> getScope
 
-modifyScope :: (Scope -> Scope) -> LC ()
+modifyScope :: MonadState LocaleState m => (Scope -> Scope) -> m ()
 modifyScope f = modify $ \ls -> ls { lcsScope = f (lcsScope ls) }
 
-inScope :: Scope -> LC a -> LC a
+inScope :: MonadState LocaleState m => Scope -> m a -> m a
 inScope scope m = do
     st <- get
     modifyScope (const scope)
@@ -122,7 +134,10 @@ inScope scope m = do
     put st
     return x
 
-inInnerScope :: GenericTranslationData path -> LC a -> LC a
+inInnerScope :: (MonadState LocaleState m, MonadError LocaleError m)
+             => GenericTranslationData path
+             -> m a
+             -> m a
 inInnerScope Translation { tdKey=key, tdParams=params } m = do
     scope <- getScope
     case appendedToScopePath key scope of
@@ -150,14 +165,14 @@ emptyEnv :: Env
 emptyEnv = Env Set.empty
 
 
-getEnv :: LC Env
+getEnv :: MonadState LocaleState m => m Env
 getEnv = lcsEnv <$> get
 
-modifyEnv :: (Env -> Env) -> LC ()
+modifyEnv :: MonadState LocaleState m=> (Env -> Env) -> m ()
 modifyEnv f = modify $ \ls -> ls { lcsEnv = f (lcsEnv ls) }
 
-addEnv :: TranslationSignature -> LC ()
+addEnv :: MonadState LocaleState m => TranslationSignature -> m ()
 addEnv sig = modifyEnv $ Env . Set.insert sig . envSignatures
 
-addAllEnv :: [TranslationSignature] -> LC ()
+addAllEnv :: MonadState LocaleState m => [TranslationSignature] -> m ()
 addAllEnv = mapM_ addEnv

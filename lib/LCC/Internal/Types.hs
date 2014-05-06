@@ -101,6 +101,14 @@ data GenericLocale path = Locale { lcName :: String
 type TranslationData = GenericTranslationData VarPath
 type RawTranslationData = GenericTranslationData RawVarPath
 
+type LocaleImplEnv = Map.Map (VarPath, [Type]) ([Param], Expr)
+type LocaleImplEnvNode = (AbsVarPath, [Param], Expr)
+
+data LocaleImpl = LocaleImpl { _lciName :: String
+                             , _lciEnv  :: LocaleImplEnv
+                             }
+
+
 data GenericTranslationData path =
         Translation { tdKey    :: String
                     , tdParams :: [Param]
@@ -181,8 +189,8 @@ data VarPath = AbsolutePath  [String]
              | ParamName String
     deriving (Eq, Ord)
 
-data AbsVarPath = AbsVarPath [String]
-    deriving (Eq, Ord)
+newtype AbsVarPath = AbsVarPath { _absPath :: [String] }
+    deriving (Eq, Ord, Monoid, Functor)
 
 
 instance Show RawVarPath where
@@ -233,3 +241,7 @@ instance Show Scope where
 
 newtype Env = Env { envSignatures :: Set.Set TranslationSignature }
     deriving (Eq, Ord, Show)
+
+
+
+$(makeLenses [''LocaleImpl, ''AbsVarPath])
