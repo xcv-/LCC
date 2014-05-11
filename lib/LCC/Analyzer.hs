@@ -169,7 +169,7 @@ fromImpl (LocaleImpl name impl) = do
   where
     fromImplEnv :: LC TranslationData
     fromImplEnv =
-        case partition (\node -> node^._1.absPath.length == 1) of
+        case partition (\node -> node^._1.absPath.to length == 1) of
             ([], nested) -> do
                 groupBy ((==) `on` (\node -> node^._1.absPath.folding tail)
 

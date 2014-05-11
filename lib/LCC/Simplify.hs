@@ -7,9 +7,11 @@ import Control.Lens
 import qualified Data.Map as Map
 
 
-data EvalEnv t = EvalEnv { _localeImpl :: LocaleImpl
-                         , _target :: t
-                         }
+data EvalEnv t = EvalEnv
+                 { _localeImpl :: LocaleImpl
+                 , _rewrite   :: (AbsVarPath, [Param]) -> (AbsVarPath, [Param])
+                 , _target :: t
+                 }
 
 
 $(makeLens ''EvalEnv)
@@ -55,4 +57,3 @@ eval expr@(Funcall path args) = do
             args <- mapM eval args
 
             evalBuiltin (env^.target) path args
-                & either throwError return
