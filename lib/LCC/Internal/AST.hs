@@ -1,57 +1,72 @@
+import Control.Applicative
+import Control.Lens
+
+import qualified Data.Map.Strict as Map
+import Data.Monoid
+import Data.Foldable
+import Data.Traversable
 
 
-class TaggedTreeData where
-    type Tag
-    type Data
+data TaggedTree tag a
+    = Subtree (Map.Map tag (TaggedTree tag a))
+    | Leaf a
+    deriving (Eq, Show)
+
+paths :: Ord tag => TaggedTree tag a -> [[tag]]
+paths (Leaf _)    = []
+paths (Subtree m) = Map.foldrWithKey f [] m
+  where
+    f :: Ord tag => tag -> TaggedTree tag a -> [[tag]] -> [[tag]]
+    f k (Leaf _) acc = [k] : acc
+    f k v        acc = map (k:) (paths v) ++ acc
+
+flatten :: Ord tag => TaggedTree tag a -> [([tag], a)]
+flatten tree = zip (paths tree) (toList tree)
+
+{-
+data Translation path ret =
+    Translation { _signature :: Signature path ret
+                , _impl :: Expr path
+                }
 
 
-data TaggedTree a
-    = Subtree { _name  :: Tag a
-              , _nodes :: [TaggedTree a]
-              }
-    | Leaf { _name    :: Tag a
-           , _content :: Data a
-           }
+type AST path ret = TaggedTree PathNode (Translation path ret)
+    -}
 
 
-type ASTData path = (AbsolutePath, Translation path)
+instance Functor (TaggedTree tag) where
+    fmap f (Subtree m) = Subtree $ (fmap.fmap) f m
+    fmap f (Leaf x)    = Leaf (f x)
 
-instance TaggedTreeData (ASTData path) where
-    type Tag = String
-    type Data = Translation path
+instance Foldable (TaggedTree tag) where
+    foldMap f (Subtree m) = (foldMap.foldMap) f m
+    foldMap f (Leaf x)    = f x
+
+instance Traversable (TaggedTree tag) where
+    sequenceA (Subtree m) = Subtree <$> sequenceA (fmap sequenceA m)
+    sequenceA (Leaf x)    = Leaf <$> x
 
 
-data AST path = TaggedTree ASTData
-    deriving (Show)
 
-instance (TaggedTreeData a, Monoid (Data TaggedTreeData)) =>
-      Foldable TaggedTree where
+type instance Index (TaggedTree tag a)   = tag
+type instance IxValue (TaggedTree tag a) = TaggedTree tag a
 
-    foldMap f Leaf {..} = f (pure _name, _nodes)
-    foldMap f s@Subtree {} = foldMap' [] f s
+
+instance Ord tag => Ixed (TaggedTree tag a) where
+    ix k f tree@(Leaf _) = pure tree
+    ix k f tree@(Subtree m) = case Map.lookup k m of
+        Nothing -> pure tree
+        Just v  -> (\v' -> Subtree $ Map.insert k v' m) <$> f v
+
+
+
+instance Ord tag => At (TaggedTree tag a) where
+    at k = lens get set
       where
-        foldMap' path
+        get (Subtree m) = Map.lookup k m
+        get (Leaf _) = Nothing
 
-
-
-type TranslationData = GenericTranslationData VarPath
-type RawTranslationData = GenericTranslationData RawVarPath
-
-type LocaleImplEnv = Map.Map (VarPath, [Type]) ([Param], Expr)
-type LocaleImplEnvNode = (AbsVarPath, [Param], Expr)
-
-data LocaleImpl = LocaleImpl { _lciName :: String
-                             , _lciEnv  :: LocaleImplEnv
-                             }
-
-
-data GenericTranslationData path =
-        Translation { tdKey    :: String
-                    , tdParams :: [Param]
-                    , tdImpl   :: GenericExpr path
-                    }
-      | NestedData { tdSubGroupName :: String
-                   , tdNestedData :: [GenericTranslationData path]
-                   }
-    deriving (Show)
-
+        set tree@(Leaf _) _  = tree
+        set (Subtree m) mv = case mv of
+            Nothing -> Subtree (Map.delete k m)
+            Just v  -> Subtree (Map.insert k v m)

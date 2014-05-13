@@ -5,24 +5,24 @@ import Control.Lens.Lens
 import Control.Lens.Prism
 
 
-type Node = String
+type PathNode = String
 
 
-data RelativePath = RAbsolutePath [Node]
-                  | RRelativePath [Node]
+data RelativePath = RAbsolutePath [PathNode]
+                  | RRelativePath [PathNode]
     deriving (Eq, Ord)
 
-newtype AbsolutePath = AbsolutePath [Node]
+newtype AbsolutePath = AbsolutePath [PathNode]
     deriving (Eq, Ord, Monoid, Functor, Applicative, Monad, Comonad)
 
 
-data RelativeVarPath = RVAbsoluteVarPath [Node]
-                     | RVRelativeVarPath [Node]
-                     | RVParamName       Node
+data RelativeVarPath = RVAbsoluteVarPath [PathNode]
+                     | RVRelativeVarPath [PathNode]
+                     | RVParamName       PathNode
     deriving (Eq, Ord)
 
-data AbsoluteVarPath = VAbsolutePath [Node]
-                     | VParamName    Node
+data AbsoluteVarPath = VAbsolutePath [PathNode]
+                     | VParamName    PathNode
     deriving (Eq, Ord)
 
 
@@ -31,13 +31,13 @@ data AbsoluteVarPath = VAbsolutePath [Node]
 -- Overloaded constructors
 
 class FromAbsolute path where
-    mkAbsolute :: [Node] -> path
+    mkAbsolute :: [PathNode] -> path
 
 class FromParamName path where
-    mkParamName :: Node -> path
+    mkParamName :: PathNode -> path
 
 class FromRelative path where
-    mkRelative :: [Node] -> path
+    mkRelative :: [PathNode] -> path
 
 
 
