@@ -1,20 +1,23 @@
-module Signature where
+module LCC.Internal.Signature where
 
 import LCC.Internal.Path
 
 
-type RelativeGlobalSignature = Signature RelativePath
-type RelativeVarSignature    = Signature RelativeVarPath
+type Parsed p t = t p ()
+type Analyzed p t = t p ()
 
-type GlobalSignature = Signature AbsolutePath
-type VarSignature    = Signature AbsoluteVarPath
+type RelGlobal = RelativePath
+type RelVar    = RelativeVarPath
+
+type Global = AbsolutePath
+type Var    = AbsoluteVarPath
 
 
-data Signature path = Signature
-                      { _sigPath :: path
-                      , _sigParams :: [Param]
-                      , _sigReturn :: Type
-                      }
+data Signature path ret = Signature
+                          { _sigPath :: path
+                          , _sigParams :: [Param]
+                          , _sigReturn :: ret
+                          }
     deriving (Eq, Ord)
 
 
@@ -34,14 +37,14 @@ data Type = TInt
 
 
 
-instance Show path => Show (Signature path) where
-  show Signature {} =
-      show path ++ ": (" ++ paramList ++ ") -> " ++ show ret
+instance (Show path, Show ret) => Show (Signature path ret) where
+  show sig =
+      show (sig^.sigPath) ++ ": (" ++ paramList ++ ") -> " ++ show _sigReturn
     where
-      paramList = intercalate ", " $ map show params
+      paramList = intercalate ", " $ map show _sigParams
 
 instance Show Param where
-  show param@Param {} =
+  show param =
       show (param^.paramType) ++ " " ++ (param^.paramName)
 
 instance Show Type where

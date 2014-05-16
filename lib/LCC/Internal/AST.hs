@@ -1,3 +1,6 @@
+{-# LANGUAGE TypeFamilies #-}
+module LCC.Internal.AST
+
 import Control.Applicative
 import Control.Lens
 
@@ -12,26 +15,24 @@ data TaggedTree tag a
     | Leaf a
     deriving (Eq, Show)
 
-paths :: Ord tag => TaggedTree tag a -> [[tag]]
+paths :: (Ord tag, Monoid s, Cons s s tag tag) => TaggedTree tag a -> [s]
 paths (Leaf _)    = []
-paths (Subtree m) = Map.foldrWithKey f [] m
+paths (Subtree m) = Map.foldrWithKey collect [] m
   where
-    f :: Ord tag => tag -> TaggedTree tag a -> [[tag]] -> [[tag]]
-    f k (Leaf _) acc = [k] : acc
-    f k v        acc = map (k:) (paths v) ++ acc
+    collect k (Leaf _) acc = (k <| mempty) : acc
+    collect k tree     acc = map (k <|) (paths tree) ++ acc
 
-flatten :: Ord tag => TaggedTree tag a -> [([tag], a)]
+flatten :: (Ord tag, Monoid s, Cons s s tag tag) => TaggedTree tag a -> [(s, a)]
 flatten tree = zip (paths tree) (toList tree)
 
-{-
+
 data Translation path ret =
-    Translation { _signature :: Signature path ret
-                , _impl :: Expr path
+    Translation { _trSignature :: Signature path ret
+                , _trImpl :: Expr path
                 }
 
 
 type AST path ret = TaggedTree PathNode (Translation path ret)
-    -}
 
 
 instance Functor (TaggedTree tag) where
@@ -57,7 +58,6 @@ instance Ord tag => Ixed (TaggedTree tag a) where
     ix k f tree@(Subtree m) = case Map.lookup k m of
         Nothing -> pure tree
         Just v  -> (\v' -> Subtree $ Map.insert k v' m) <$> f v
-
 
 
 instance Ord tag => At (TaggedTree tag a) where

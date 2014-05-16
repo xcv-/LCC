@@ -5,7 +5,6 @@ import Control.Lens.TH
 
 import LCC.Internal.Path
 
-type ReadyExpr = Expr AbsolutePath
 
 data Expr path
     = IntLiteral    { _exprInt     :: Integer     }
@@ -20,11 +19,11 @@ data Expr path
                     , _exprArgs     :: [Expr path]
                     }
 
-    | Conditional   { _exprCondition :: Expr path
-                    , _exprConsequent :: Expr path
+    | Conditional   { _exprCondition   :: Expr path
+                    , _exprConsequent  :: Expr path
                     , _exprAlternative :: Expr path
                     }
-
+    | Builtin
     deriving (Ord, Eq, Show)
 
 
@@ -68,3 +67,8 @@ _array :: SimplePrism (Expr path) [Expr path]
 _array = prism ArrayLiteral $ \case of
     ArrayLiteral x -> Right x
     x              -> Left x
+
+_builtin :: SimplePrism (Expr path) ()
+_builtin = prism (const Builtin) $ \case of
+    Builtin -> Right ()
+    x       -> Left x

@@ -1,60 +1,83 @@
+{-# LANGUAGE ConstraintKinds #-}
 module LCC.Internal.Environment where
 
+import qualified Data.Map as Map
 
-import Types
+import LCC.Internal.AST
+import LCC.Internal.Path
+import LCC.Internal.Signature
 
-newtype Env = Env { _envSignatures :: Set.Set TranslationSignature }
-    deriving (Eq, Ord, Show)
 
 
-paramSignature :: Param -> VarSignature
-paramSignature param = Signature
-    { _sigPath = ParamName (paramName param)
-    , _sigParams = []
-    , _sigReturn = paramType param
+newtype Env path ret = Env
+    { _envMap :: Map.Map (Signature AbsolutePath ret) (Expr path)
     }
+  deriving (Eq, Ord, Show)
+
+
+type EnvM path ret = MonadState (Env path ret)
+
+
+paramSignature :: Param -> Signature AbsoluteVarPath Type
+paramSignature param = Signature
+    { _sigPath = ParamName (param^.paramName)
+    , _sigParams = []
+    , _sigReturn = param^.paramType
+    }
+
 
 filterParams :: String -> [Param] -> [Param]
 filterParams name =
-    filter (\p -> paramName p == name)
+    filter (\p -> p^.paramName == name)
 
-matchParams :: [Type] -> Signature path -> Bool
+matchParams :: [Type] -> Signature path ret -> Bool
 matchParams types signature =
-    map paramType (sigParams signature) == types
+    signature^..sigParams.traverse.paramType == types
 
 
-findGlobalSignatures :: MonadState Env m => AbsolutePath -> m [GlobalSignature]
+
+findGlobalSignatures :: EnvM AbsolutePath ret m
+                     => AbsolutePath
+                     -> m [Signature AbsolutePath ret]
 findGlobalSignatures path =
-    filter (\sig -> sig^.sigPath == path) <$> signatures
-  where
-    signatures :: MonadState Env m => m [GlobalSignature]
-    signatures = use $ envSignatures^..traverse
+    gets $ toListOf $
+      envMap.to Map.keys.folded.filtered (\sig -> sig^.sigPath == path)
 
 
-findGlobalSignature :: MonadState Env m
+findGlobalSignature :: EnvM AbsolutePath ret m
                     => AbsolutePath
                     -> [Type]
-                    -> m (Maybe GlobalSignature)
+                    -> m (Maybe (Signature AbsolutePath ret))
 findGlobalSignature path paramTypes =
     find (matchParams paramTypes) <$> findGlobalSignatures path
 
 
-findSignatures :: (MonadState Env m, Scoped m)
-               => VarPath
-               -> m [VarSignature]
-findSignatures (VAbsolutePath path) =
-    map toVarPath <$> findGlobalSignatures (AbsolutePath path)
-  where
-    toVarPath sig@Signature {} = sig^.sigPath %~ absolute.extract
 
-findSignatures (VParamName name) = do
-    scope <- get
-    case scope of
-        SubGroupScope _ -> return []
-        TranslationScope _ params  ->
-            return . map paramSignature . filterParams name $ params
+findSignatures :: (EnvM AbsoluteVarPath ret m, ScopedAST AbsoluteVarPath ret m)
+               => AbsoluteVarPath
+               -> m [Signature AbsoluteVarPath ret]
+findSignatures path =
+    case path of
+      VAbsolutePath p ->
+        findGlobalSignatures (mkAbsolute p)
+          <&> map (sigPath %~ mkAbsolute . view absolute)
+
+      VParamName name ->
+        use (toListOf $ scopeData.trSignature.sigParams)
+          <&> map paramSignature . filterParams name
 
 
-findSignature :: MonadState Env m => VarPath -> [Type] -> m (Maybe VarSignature)
+findSignature :: EnvM AbsoluteVarPath ret m
+              => AbsoluteVarPath
+              -> [Type]
+              -> m (Maybe (Signature AbsoluteVarPath ret))
 findSignature path paramTypes =
     find (matchParams paramTypes) <$> findSignatures path
+
+
+
+findGlobalImpl :: EnvM path ret m
+               => Signature AbsolutePath ret
+               -> m (Maybe (Expr path))
+findGlobalImpl sig =
+    use $ envMap.at sig

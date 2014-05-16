@@ -1,76 +1,76 @@
+{-# LANGUAGE ConstraintKinds #-}
 module LCC.Internal.Scope where
+
+import Data.Applicative
 
 import Control.Monad.Error
 import Text.Printf (printf)
 
 import LCC.Internal.Error
 import LCC.Internal.Path
+import LCC.Internal.AST
 
 
-type Scoped = MonadState Scope
 
-data Scope = LeafScope { _scopePath   :: AbsolutePath
-                       , _scopeParams :: [Param]
-           | SubtreeScope { _scopePath :: AbsolutePath
-                          }
+data Scope n = Scope { _scopePath :: AbsolutePath
+                     , _scopeData :: Maybe n
+                     }
     deriving Eq
 
-instance Show Scope where
-    show (LeafScope path params) =
-        printf "%s(%s)" (show path) (intercalate ", " $ map show params)
 
-    show (SubtreeScope path) =
+instance Show n => Show (Scope n) where
+    show (Scope path (Just a)) =
+        printf "%s(%s)" (show path) (show a)
+
+    show (Scope path Nothing) =
         printf "%s" (show path)
 
 
-topLevelScope :: Scope
-topLevelScope = SubtreeScope mempty
+type ScopeT n m a = StateT (Scope n) m a
+type Scoped n     = MonadState (Scope n)
+
+type ScopedAST path ret = Scoped (Translation path ret)
+
+runScopeT :: ScopeT n m a -> m a
+runScopeT m = evalStateT m topLevel
 
 
-extendScope :: Scope -> PathNode -> Maybe Scope
-extendScope LeafScope {} _ = Nothing
-extendScope scope@SubtreeScope {} node =
-    Just $ node & scopePath.absolute %~ (<> [node])
 
 
-inScope :: MonadState Scope m => Scope -> m a -> m a
-inScope scope m = do
+topLevel :: Scope n
+topLevel = Scope mempty Nothing
+
+
+extendScope :: PathNode -> Scope n -> Scope n
+extendScope node = scopePath.absolute |>~ node
+
+
+inModifiedScope :: Scoped n m => (Scope n -> Scope n) -> m a -> m a
+inModifiedScope f m = do
     oldScope <- get
-    put scope
+    modify f
     x <- m
     put oldScope
     return x
 
-inInnerScope, (/>) :: (Scoped m, MonadError LocaleError m)
-                   => TranslationTree path
-                   -> m a
-                   -> m a
-inInnerScope leaf@Leaf {} = do
-    scope <- get
-
-    case extendScope scope (leaf^.name) of
-        Just newPath ->
-            inScope (LeafScope newPath (leaf^.params) m
-
-        Nothing ->
-            throwError $ LocalePathError scope
-                                         ("Cannot navigate to " ++ key)
-                                         (scope^.scopePath.absolute)
-
-inInnerScope subtree@Subtree {} =
-    scope <- get
-
-    case extendScope scope (subtree^.name) of
-        Just newPath ->
-            inScope (SubtreeScope newPath) m
-
-        Nothing ->
-            throwError $ LocalePathError scope
-                                         ("Cannot navigate to " ++ name)
-                                         (scope^.scopePath.absolute)
+inScope :: Scoped n m => Scope n -> m a -> m a
+inScope scope m = inModifiedScope (const scope) m
 
 
-(/>) = inInnerScope
+scopedTraverse :: (Scoped n m, MonadError LCE.Error m, Applicative m)
+               => (a -> m b)
+               -> TaggedTree PathNode a
+               -> m (TaggedTree PathNode b)
+scopedTraverse f tree =
+    case tree of
+        Leaf x ->
+            Leaf <$> inModifiedScope (scopeData .~ Just x) (f x)
+
+        Subtree m -> do
+            scope <- liftM (scopeData .~ Nothing) get
+            Map.traverseWithKey $ \k v ->
+                inScope (extendScope k scope)
+                        (scopedTraverse f v)
 
 
 makeLenses ''Scope

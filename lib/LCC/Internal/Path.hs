@@ -4,40 +4,48 @@ import Control.Comonad
 import Control.Lens.Lens
 import Control.Lens.Prism
 
+import qualified Data.Seq as Seq
+
 
 type PathNode = String
+type Seq a = Seq.Seq a
 
 
-data RelativePath = RAbsolutePath [PathNode]
-                  | RRelativePath [PathNode]
+data RelativePath = RAbsolutePath (Seq PathNode)
+                  | RRelativePath (Seq PathNode)
     deriving (Eq, Ord)
 
-newtype AbsolutePath = AbsolutePath [PathNode]
-    deriving (Eq, Ord, Monoid, Functor, Applicative, Monad, Comonad)
+newtype AbsolutePath = AbsolutePath (Seq PathNode)
+    deriving (Eq, Ord, Monoid,
+              Functor, Applicative, Monad, Comonad)
 
 
-data RelativeVarPath = RVAbsoluteVarPath [PathNode]
-                     | RVRelativeVarPath [PathNode]
+data RelativeVarPath = RVAbsoluteVarPath (Seq PathNode)
+                     | RVRelativeVarPath (Seq PathNode)
                      | RVParamName       PathNode
     deriving (Eq, Ord)
 
-data AbsoluteVarPath = VAbsolutePath [PathNode]
+data AbsoluteVarPath = VAbsolutePath (Seq PathNode)
                      | VParamName    PathNode
     deriving (Eq, Ord)
 
+
+
+(|>~) :: Snoc sn sn a a => Setting (->) s t sn sn -> a -> s -> t
+lens |>~ a = lens %~ (|> a)
 
 
 
 -- Overloaded constructors
 
 class FromAbsolute path where
-    mkAbsolute :: [PathNode] -> path
+    mkAbsolute :: (Seq PathNode) -> path
 
 class FromParamName path where
     mkParamName :: PathNode -> path
 
 class FromRelative path where
-    mkRelative :: [PathNode] -> path
+    mkRelative :: (Seq PathNode) -> path
 
 
 
@@ -95,13 +103,13 @@ absolute = lens extract ($>)
 -- Prisms
 
 class RelativePrism path where
-    _relative :: SimplePrism path [String]
+    _relative :: SimplePrism path (Seq PathNode)
 
 class ParamNamePrism path where
-    _paramName :: SimplePrism path String
+    _paramName :: SimplePrism path PathNode
 
 class AbsolutePrism path where
-    _absolute :: SimplePrism path [String]
+    _absolute :: SimplePrism path (Seq PathNode)
 
 
 
