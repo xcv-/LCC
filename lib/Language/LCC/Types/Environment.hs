@@ -1,11 +1,10 @@
-{-# LANGUAGE ConstraintKinds #-}
-module LCC.Internal.Environment where
+module Language.LCC.Types.Environment where
 
 import qualified Data.Map as Map
 
-import LCC.Internal.AST
-import LCC.Internal.Path
-import LCC.Internal.Signature
+import Language.LCC.Types.AST
+import Language.LCC.Types.Path
+import Language.LCC.Types.Signature
 
 
 
@@ -15,12 +14,12 @@ newtype Env path ret = Env
   deriving (Eq, Ord, Show)
 
 
-type EnvM path ret = MonadState (Env path ret)
+type EnvM path ret m = MonadState (Env path ret) m
 
 
-paramSignature :: Param -> Signature AbsoluteVarPath Type
+paramSignature :: FromParamName path => Param -> Signature path Type
 paramSignature param = Signature
-    { _sigPath = ParamName (param^.paramName)
+    { _sigPath = mkParamName (param^.paramName)
     , _sigParams = []
     , _sigReturn = param^.paramType
     }
@@ -32,7 +31,7 @@ filterParams name =
 
 matchParams :: [Type] -> Signature path ret -> Bool
 matchParams types signature =
-    signature^..sigParams.traverse.paramType == types
+    signature^..sigParams.each.paramType == types
 
 
 
@@ -40,8 +39,7 @@ findGlobalSignatures :: EnvM AbsolutePath ret m
                      => AbsolutePath
                      -> m [Signature AbsolutePath ret]
 findGlobalSignatures path =
-    gets $ toListOf $
-      envMap.to Map.keys.folded.filtered (\sig -> sig^.sigPath == path)
+    gets $ toListOf $ envMap.to Map.keys.folded.filtered (\sig -> sig^.sigPath == path)
 
 
 findGlobalSignature :: EnvM AbsolutePath ret m
@@ -63,7 +61,7 @@ findSignatures path =
           <&> map (sigPath %~ mkAbsolute . view absolute)
 
       VParamName name ->
-        use (toListOf $ scopeData.trSignature.sigParams)
+        view (toListOf $ scopeData.trSignature.sigParams)
           <&> map paramSignature . filterParams name
 
 

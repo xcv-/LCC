@@ -1,4 +1,4 @@
-module LCC.Lexer
+module Language.LCC.Lexer
   ( whiteSpace
   , lexeme
   , symbol
@@ -96,26 +96,26 @@ lccDef = Tok.LanguageDef
   , Tok.caseSensitive = True
   }
 
-lcc = Tok.makeTokenParser lccDef
+lc = Tok.makeTokenParser lccDef
 
-whiteSpace     = Tok.whiteSpace    lcc
-lexeme         = Tok.lexeme        lcc
-symbol         = Tok.symbol        lcc
-reserved       = Tok.reserved      lcc
-parens         = Tok.parens        lcc
-braces         = Tok.braces        lcc
-brackets       = Tok.brackets      lcc
-dot            = Tok.dot           lcc
-colon          = Tok.colon         lcc
-comma          = Tok.comma         lcc
-commaSep       = Tok.commaSep      lcc
-commaSep1      = Tok.commaSep1     lcc
+whiteSpace     = Tok.whiteSpace    lc
+lexeme         = Tok.lexeme        lc
+symbol         = Tok.symbol        lc
+reserved       = Tok.reserved      lc
+parens         = Tok.parens        lc
+braces         = Tok.braces        lc
+brackets       = Tok.brackets      lc
+dot            = Tok.dot           lc
+colon          = Tok.colon         lc
+comma          = Tok.comma         lc
+commaSep       = Tok.commaSep      lc
+commaSep1      = Tok.commaSep1     lc
 
-identifier     = Tok.identifier    lcc
-intLiteral     = Tok.integer       lcc
-floatLiteral   = Tok.float         lcc
-charLiteral    = Tok.charLiteral   lcc
-stringLiteral  = Tok.stringLiteral lcc
+identifier     = Tok.identifier    lc
+intLiteral     = Tok.integer       lc
+floatLiteral   = Tok.float         lc
+charLiteral    = Tok.charLiteral   lc
+stringLiteral  = Tok.stringLiteral lc
 
 boolLiteral    = (True  <$ symbol "true")
            P.<|> (False <$ symbol "false")

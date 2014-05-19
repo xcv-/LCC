@@ -1,4 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
 module LCC.Output.Java
   ( JavaTarget (..)
   ) where
@@ -165,7 +164,6 @@ javaIndent target count = T.replicate count unit
              else "\t"
 
 javaType :: Type -> T.Text
-javaType TAny    = error "TAny passed to javaType"
 javaType TInt    = "int"
 javaType TDouble = "double"
 javaType TBool   = "boolean"
