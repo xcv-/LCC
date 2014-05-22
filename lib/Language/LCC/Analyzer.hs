@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE RankNTypes #-}
@@ -7,16 +9,19 @@ module Language.LCC.Analyzer where
 
 import Prelude hiding (mapM, mapM_, forM_, foldlM, foldrM, sequence)
 
-import Control.Applicative hiding ((<|>), many)
-import Control.Lens
+import Control.Applicative
+import Control.Arrow (first, second)
+import Control.Lens hiding (Identity(..), runIdentity)
+import Control.Monad (liftM, liftM2)
 import Control.Monad (unless, ap, liftM)
+import Control.Monad.Identity (Identity(..), runIdentity)
 import Control.Monad.Error (throwError)
 import Control.Monad.Reader (asks)
 import Control.Monad.State.Strict (MonadState, StateT, execStateT,
                                    get, gets, modify)
 
 import Data.Foldable
-import Data.Monoid
+import Data.Semigroup
 import Data.Sequence (ViewL(..), ViewR(..))
 import Data.Traversable
 
@@ -161,50 +166,59 @@ inferReturnTypes l =
         exprType <- exprType'
         retType <- t ./> exprType . view trImpl
 
-        case retType of
-            Nothing -> modify $ \(known, unknown) -> (known, t:unknown)
+        modify $ case unwrapMaybe retType of
+            Nothing -> second (t:)
 
             Just ret -> let setter = at (t^.trSignature.sigPath)
                             newVal = t & trSignature.sigReturn .~ ret
-                        in modify $ \(known, unknown) ->
-                              (known & setter .~ Just newVal, unknown)
+                        in first (setter .~ Just newVal)
 
     revForM_ :: Monad m => [a] -> (a -> m b) -> m ()
     revForM_ xs f = foldrM (\x () -> f x >> return ()) () xs
 
     exprType' :: (MonadState InferIterData st, Err.ErrorM m)
-              => st (Expr AbsoluteVarPath
-                     -> ScopedAbsAST UnknownType m (Maybe Type))
-    exprType' = liftM2 exprType  folder' getSigReturn'
+              => st (AbsExpr -> ScopedAbsAST UnknownType m (WrappedMaybe Type))
+    exprType' = liftM2 exprType folder' getSigReturn'
 
-    folder' :: MonadState InferIterData st => st (TypeFolder m)
+    folder' :: (Monad m, MonadState InferIterData st)
+            => st (TypeFolder m WrappedMaybe)
     folder' = liftM foldInfer getSigReturn'
 
-    getSigReturn' :: MonadState InferIterData st => st (SigReturnGetter m Maybe)
-    getSigReturn' = liftM mapLookupMaybe $ use _1
+    getSigReturn' :: (Monad m, MonadState InferIterData st)
+                  => st (SigReturnGetter m WrappedMaybe)
+    getSigReturn' = do
+        gsr <- liftM mapLookupMaybe (gets fst)
+
+        return $ \path -> liftM WrapMaybe . gsr path . map unwrapMaybe
 
 
 
 
-
-
-typeCheck :: Err.ErrorM m => AbsLocale ret -> m ()
-typeCheck l = scopedMapM_ checkLeaf (l^.localeAST)
+typeCheck :: Err.ErrorM m => AbsLocale Type -> m ()
+typeCheck l = scopedMapM_ checkLeaf ast
   where
-    checkLeaf :: AbsTranslation ret -> m ()
-    checkLeaf = exprType foldCheck True . _trImpl
+    ast :: AbsAST Type
+    ast = l^.localeAST
+
+    getSigReturn :: SigReturnGetter m Identity
+    getSigReturn = astLookupOrThrow ast
+
+    checkLeaf :: ExprTypeConstr m Identity
+              => AbsTranslation Type
+              -> ScopedAbsAST Type m (Identity Type)
+    checkLeaf = exprType (foldCheck getSigReturn) getSigReturn . _trImpl
 
 
-inferType :: Err.ErrorM m => Expr AbsoluteVarPath -> m Type
-inferType = exprType (foldInfer True) True
 
+type ExprTypeConstr m f = ( Err.ErrorM m
+                          , Traversable f
+                          , Applicative f
+                          , Semigroup (f Type)
+                          )
 
-
-type ExprTypeConstr m f = (Err.ErrorM m, Traversable f, Applicative f)
-
-type TypeFolder m = Maybe Type
-                 -> [Expr AbsoluteVarPath]
-                 -> ScopedAbsAST Type m (Maybe Type)
+type TypeFolder m f = f Type
+                    -> [AbsExpr]
+                    -> ScopedAbsAST Type m (f Type)
 
 type SigReturnGetter m f = AbsoluteVarPath
                         -> [f Type]
@@ -212,24 +226,25 @@ type SigReturnGetter m f = AbsoluteVarPath
 
 
 exprType :: ExprTypeConstr m f
-         => TypeFolder m
+         => TypeFolder m f
          -> SigReturnGetter m f
-         -> Expr AbsoluteVarPath
-         -> ScopedAbsAST ret1 m (f ret2)
+         -> AbsExpr
+         -> ScopedAbsAST ret m (f Type)
 exprType fold getSigReturn expr
-  | is _IntL    = return TInt
-  | is _DoubleL = return TDouble
-  | is _BoolL   = return TBool
-  | is _CharL   = return TChar
-  | is _StringL = return TString
+  | is _IntL    = return (pure TInt)
+  | is _DoubleL = return (pure TDouble)
+  | is _BoolL   = return (pure TBool)
+  | is _CharL   = return (pure TChar)
+  | is _StringL = return (pure TString)
   | is _SConcat = do
-      fold (Just TString) (expr^?!_SConcat) >>= \case
-        (Just TString) -> return TString
-        (Just other)   -> Err.typeError TString other
-        Nothing        -> Err.panic "exprType: fold returned Nothing)"
+      ret <- fold (pure TString) (expr^?!_SConcat)
+
+      sequenceA $ ret <&> \case
+        TString -> return TString
+        other   -> Err.typeError TString other
 
   | is _Array =
-      TArray <$> fold Nothing (expr^?!_Array)
+      (fmap.fmap) TArray $ fold Nothing (expr^?!_Array)
 
   | is _Cond = do
       let (condition, ifT, ifF) = expr^?!_Cond
@@ -240,9 +255,9 @@ exprType fold getSigReturn expr
       let (fnPath, args) = expr^?!_Funcall
       argTypes <- mapM (exprType fold getSigReturn) args
 
-      sequence $ getSigReturn fnPath <$> argTypes
+      sequence $ getSigReturn fnPath argTypes
 
-  | is _Builtin = return (expr^?!_Builtin)
+  | is _Builtin = return $ pure (expr^?!_Builtin)
   where
     is prism = has prism expr
 
@@ -250,26 +265,28 @@ exprType fold getSigReturn expr
 
 -- TypeFolders
 
-foldInfer :: SigReturnGetter m t -> TypeFolder m
-foldInfer _            (Just known) _     = return (Just known)
-foldInfer getSigReturn Nothing      exprs =
-    let types = forM exprs $ exprType (foldInfer getSigReturn) getSigReturn
-    in getFirst . foldMap First <$> types
+foldInfer :: Semigroup (f Type) => SigReturnGetter m f -> TypeFolder m f
+foldInfer getSigReturn t exprs = do
+    types <- forM exprs $ exprType (foldInfer getSigReturn) getSigReturn
+
+    foldl' (<>) t types
 
 
 
-foldCheck :: SigReturnGetter m t -> TypeFolder m
-foldCheck _            expected []    = return expected
-foldCheck getSigReturn expected exprs =
-    let types = forM exprs $ exprType (foldCheck getSigReturn) getSigReturn
-    in foldlM checkEqual expected <$> types
+foldCheck :: Semigroup (f [Type]) => SigReturnGetter m f -> TypeFolder m f
+foldCheck getSigReturn t exprs = do
+    types <- forM exprs $ exprType (foldCheck getSigReturn) getSigReturn
+
+    sequence $ foldl' checkEqual [t] $ (map.fmap) (:[]) types
   where
-    checkEqual :: Err.ErrorM m => Type -> Type -> m Type
-    checkEqual Nothing         found        = return found
-    checkEqual expected        Nothing      = return expected
-    checkEqual (Just expected) (Just found)
-      | expected == found = return (Just found)
-      | otherwise         = Err.typeError expected found
+    checkEqual expected found = sequence $ (expected <> found) <&> \case
+        [t]   -> return t
+
+        [t,u]
+          | t == u    -> return t
+          | otherwise -> Err.typeError t u
+
+        ts    -> Err.panic $ "foldCheck: Unexpected result length =" ++ show (length ts)
 
 
 
@@ -301,3 +318,16 @@ astLookupOrThrow ast path paramTypes = do
     astLookupMaybe ast path paramTypes' >>= \case
       Just t  -> return $ Identity t
       Nothing -> Err.signatureNotFound path (map runIdentity paramTypes)
+
+
+-- Instances
+
+instance Semigroup a => Semigroup (Identity a) where
+    Identity x <> Identity y = Identity (x <> y)
+
+
+newtype WrappedMaybe a = WrapMaybe { unwrapMaybe :: Maybe a }
+    deriving (Eq, Ord, Monoid, Functor, Applicative, Foldable, Traversable)
+
+instance Semigroup (WrappedMaybe a) where
+    (<>) = mappend

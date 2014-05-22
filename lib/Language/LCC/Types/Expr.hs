@@ -9,7 +9,6 @@ import Data.Functor
 import Data.Monoid
 import Data.Traversable
 
-import Language.LCC.Types.Path
 import Language.LCC.Types.Signature
 
 

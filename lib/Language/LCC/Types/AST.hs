@@ -131,6 +131,9 @@ data Translation path ret =
 makeLenses ''Translation
 
 
+type RelExpr = Expr RelativeVarPath
+type AbsExpr = Expr AbsoluteVarPath
+
 type RelTranslation ret = Translation RelativeVarPath ret
 type AbsTranslation ret = Translation AbsoluteVarPath ret
 

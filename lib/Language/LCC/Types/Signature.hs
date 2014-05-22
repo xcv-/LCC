@@ -11,6 +11,7 @@ import Language.LCC.Types.Path
 
 
 data UnknownType = UnknownType
+    deriving (Eq, Ord)
 
 
 instance Show UnknownType where
