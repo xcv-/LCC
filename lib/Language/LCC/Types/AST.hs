@@ -7,7 +7,6 @@ module Language.LCC.Types.AST where
 import Prelude hiding (mapM_, foldl)
 
 import Control.Applicative
-import Control.Monad.Reader hiding (mapM_)
 import Control.Lens
 
 import Data.Foldable
@@ -23,11 +22,9 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Sequence as Seq
 
 import qualified Text.Parsec.Pos as Parsec
-import Text.Printf (printf)
 
 import Language.LCC.Types.Expr
 import Language.LCC.Types.Path
-import Language.LCC.Types.Scope
 import Language.LCC.Types.Signature
 
 
@@ -77,18 +74,18 @@ instance Ord tag => At (TaggedTree tag a) where
 
 
 
-paths :: (Ord tag, Monoid s, Cons s s tag tag) => TaggedTree tag a -> [s]
+paths :: (Ord tag, Monoid s, Cons' s tag) => TaggedTree tag a -> [s]
 paths (Leaf _)    = []
 paths (Subtree m) = Map.foldrWithKey collect [] m
   where
     collect k (Leaf _) acc = (k <| mempty) : acc
     collect k tree     acc = map (k <|) (paths tree) ++ acc
 
-flatten :: (Ord tag, Monoid s, Cons s s tag tag) => TaggedTree tag a -> [(s, a)]
+flatten :: (Ord tag, Monoid s, Cons' s tag) => TaggedTree tag a -> [(s, a)]
 flatten tree = zip (paths tree) (toList tree)
 
 
-rebuild :: (Ord tag, Cons s s tag tag)
+rebuild :: (Ord tag, Cons' s tag)
         => [(s, a)]
         -> TaggedTree tag a
 rebuild ns =
@@ -97,26 +94,26 @@ rebuild ns =
                             & _2 %~ subtreeMap
      in Subtree $ Map.fromList (leafs <> subtrees)
   where
-    subtreeMap :: (Ord tag, Cons s s tag tag)
+    subtreeMap :: (Ord tag, Cons' s tag)
                => [(s, a)] -> [(tag, TaggedTree tag a)]
     subtreeMap = map (over _2 rebuild)
                . map extractHead
                . groupBy ((==) `on` head . fst)
 
-    extractHead :: Cons s s tag tag => [(s,a)] -> (tag, [(s, a)])
+    extractHead :: Cons' s tag => [(s,a)] -> (tag, [(s, a)])
     extractHead sts = sts & traverse . _1 %%~ over _1 (First . Just) . uncons
                           & _1 %~ fromJust . getFirst
 
-    isSingleElement :: Cons s s tag tag => s -> Bool
+    isSingleElement :: Cons' s tag => s -> Bool
     isSingleElement s = hasn't (_tail._head) s
 
-    uncons :: Cons s s a a => s -> (a,s)
+    uncons :: Cons' s a => s -> (a,s)
     uncons s = s^?!_Cons
 
-    head :: Cons s s a a => s -> a
+    head :: Cons' s a => s -> a
     head = fst . uncons
 
-    tail :: Cons s s a a => s -> s
+    tail :: Cons' s a => s -> s
     tail = snd . uncons
 
 
@@ -150,59 +147,6 @@ type FlatRelASTMap ret = FlatASTMap RelativeVarPath ret
 type FlatAbsASTMap ret = FlatASTMap AbsoluteVarPath ret
 
 
-newtype TranslationScopeData path ret = TSD (Translation path ret)
-  deriving (Eq)
-
-makeIso ''TranslationScopeData
-
-tsd :: Iso' (TranslationScopeData path ret) (Translation path ret)
-tsd = from tSD
-
-
-type ASTScope path ret m = Scope (TranslationScopeData path ret)
-
-type ScopedAST path ret m a = ScopeT (TranslationScopeData path ret) m a
-type ScopedRelAST ret m a = ScopedAST RelativeVarPath ret m a
-type ScopedAbsAST ret m a = ScopedAST AbsoluteVarPath ret m a
-
-
-infixl 0 />
-infixl 1 ./>
-
-(/>) :: Translation path ret
-     -> ScopedAST path ret m a
-     -> m a
-t /> ma = runReaderT ma (Scope $ TSD t)
-
-(./>) :: Translation path ret
-      -> (Translation path ret -> ScopedAST path ret m a)
-      -> m a
-t ./> f = t /> f t
-
-
-
-scopedTraverse :: (Applicative m, Monad m)
-               => (Translation path ret -> ScopedAST path ret m b)
-               -> AST path ret
-               -> m (TaggedTree PathNode b)
-scopedTraverse f = traverse (./> f)
-
-
-scopedFoldlM :: Monad m
-             => (b -> Translation path ret -> ScopedAST path ret m b)
-             -> b
-             -> AST path ret
-             -> m b
-scopedFoldlM f = foldlM $ \acc -> (./> f acc)
-
-
-scopedMapM_ :: Monad m
-            => (Translation path ret -> ScopedAST path ret m b)
-            -> AST path ret
-            -> m ()
-scopedMapM_ f = mapM_ (./> f)
-
-
 
 atPath :: AbsolutePath -> Traversal' (AST path ret) (Translation path ret)
 atPath path =
@@ -215,15 +159,3 @@ atPath path =
 lookupParam :: Translation path ret -> PathNode -> Maybe Param
 lookupParam t name =
     t^?trSignature.sigParams.folded.filtered (\p -> p^.paramName == name)
-
-
-instance (Show path, Show ret) => Show (TranslationScopeData path ret) where
-    show d =
-        "[" ++ posStr ++ "] " ++ show (d^.tsd.trSignature)
-      where
-        posStr = printf "\"%s\" l%d c%d"
-            (Parsec.sourceName   srcPos)
-            (Parsec.sourceLine   srcPos)
-            (Parsec.sourceColumn srcPos)
-
-        srcPos = d^.tsd.trSourcePos

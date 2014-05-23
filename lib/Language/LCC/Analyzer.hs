@@ -1,5 +1,3 @@
-{-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE RankNTypes #-}
@@ -11,17 +9,15 @@ import Prelude hiding (mapM, mapM_, forM_, foldlM, foldrM, sequence)
 
 import Control.Applicative
 import Control.Arrow (first, second)
-import Control.Lens hiding (Identity(..), runIdentity)
-import Control.Monad (liftM, liftM2)
-import Control.Monad (unless, ap, liftM)
-import Control.Monad.Identity (Identity(..), runIdentity)
-import Control.Monad.Error (throwError)
+import Control.Lens
+import Control.Monad (liftM, liftM2, when, unless)
 import Control.Monad.Reader (asks)
 import Control.Monad.State.Strict (MonadState, StateT, execStateT,
                                    get, gets, modify)
 
 import Data.Foldable
-import Data.Semigroup
+import Data.Maybe
+import Data.Monoid
 import Data.Sequence (ViewL(..), ViewR(..))
 import Data.Traversable
 
@@ -29,9 +25,9 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Sequence as Seq
 
 import Language.LCC.Types
-
 import Language.LCC.Parser
 import Language.LCC.Target
+import Language.LCC.TypeChecker
 import qualified Language.LCC.Error as Err
 
 
@@ -78,24 +74,20 @@ compile target rawLocale = do
 
 
 toAbsolute :: (Applicative m, Err.ErrorM m, Show ret)
-           => RelLocale ret
-           -> m (AbsLocale ret)
+           => RelLocale ret -> m (AbsLocale ret)
 toAbsolute = localeAST.traverse %%~ (./> trImpl.traverse %%~ toAbsPath)
   where
-    toAbsPath :: (Applicative m, Err.ErrorM m, Show path, Show ret)
-              => RelativeVarPath
-              -> ScopedAST path ret m AbsoluteVarPath
+    toAbsPath :: (Err.ErrorM m, Scoped path ret m, Show path, Show ret)
+              => RelativeVarPath -> m AbsoluteVarPath
     toAbsPath (RVAbsolutePath path) = return $ VAbsolutePath path
     toAbsPath (RVParamName name)    = return $ VParamName name
     toAbsPath rp@(RVRelativePath path) = do
-        relTo <- asks $ view (scopeData.tsd.trSignature.sigPath.absolute)
+        relTo <- asks (^.scopeTr.trSignature.sigPath.absolute)
 
-        VAbsolutePath <$> toAbsPath' relTo path
+        liftM VAbsolutePath (toAbsPath' relTo path)
       where
-        toAbsPath' :: (Err.ErrorM m, Show path, Show ret)
-                   => Seq.Seq PathNode
-                   -> Seq.Seq PathNode
-                   -> ScopedAST path ret m (Seq.Seq PathNode)
+        toAbsPath' :: (Err.ErrorM m, Scoped path ret m, Show path, Show ret)
+                   => Seq.Seq PathNode -> Seq.Seq PathNode -> m (Seq.Seq PathNode)
         toAbsPath' relTo path =
           case Seq.viewl path of
 
@@ -111,24 +103,21 @@ toAbsolute = localeAST.traverse %%~ (./> trImpl.traverse %%~ toAbsPath)
 
 
 
-verifyNameLookup :: (Functor m, Err.ErrorM m, Show ret) => AbsLocale ret -> m ()
-verifyNameLookup l = forM_ (l^.localeAST)
-                           (./> mapM_ verifyPath . view trImpl)
+verifyNameLookup :: (Err.ErrorM m, Show ret) => AbsLocale ret -> m ()
+verifyNameLookup l = scopedMapM_ (mapM_ verifyPath . view trImpl)
+                                 (l^.localeAST)
   where
-    verifyPath :: (Functor m, Err.ErrorM m, Show ret)
-               => AbsoluteVarPath
-               -> ScopedAbsAST ret m ()
+    verifyPath :: (Err.ErrorM m, ScopedAbs ret m, Show ret)
+               => AbsoluteVarPath -> m ()
     verifyPath path = do
         found <- lookupPath path
 
         unless found
-          (Err.symbolNotFound path)
+               (Err.symbolNotFound path)
 
-    lookupPath :: (Functor m, Monad m)
-               => AbsoluteVarPath
-               -> ScopedAbsAST ret m Bool
+    lookupPath :: ScopedAbs ret m => AbsoluteVarPath -> m Bool
     lookupPath path = do
-        asks (view $ scopeData.tsd) <&> \t ->
+        asks (^.scopeTr) >>= \t -> return $
           case path of
             (VAbsolutePath path) -> has (localeAST.atPath (path^.from absolute)) l
             (VParamName name)    -> has _Just $ lookupParam t name
@@ -156,7 +145,7 @@ inferReturnTypes l =
                                         (known, unknown)
 
        if Map.size known == Map.size known'
-         then throwError $ Err.Cycle unknown'
+         then Err.cycle unknown'
          else return (known', unknown')
 
     inferPass :: (Err.ErrorM m, MonadState InferIterData m)
@@ -166,7 +155,8 @@ inferReturnTypes l =
         exprType <- exprType'
         retType <- t ./> exprType . view trImpl
 
-        modify $ case unwrapMaybe retType of
+        modify $
+          case retType of
             Nothing -> second (t:)
 
             Just ret -> let setter = at (t^.trSignature.sigPath)
@@ -176,158 +166,41 @@ inferReturnTypes l =
     revForM_ :: Monad m => [a] -> (a -> m b) -> m ()
     revForM_ xs f = foldrM (\x () -> f x >> return ()) () xs
 
-    exprType' :: (MonadState InferIterData st, Err.ErrorM m)
-              => st (AbsExpr -> ScopedAbsAST UnknownType m (WrappedMaybe Type))
-    exprType' = liftM2 exprType folder' getSigReturn'
+    exprType' :: ( MonadState InferIterData st
+                 , Err.ErrorM m
+                 , ScopedAbs UnknownType m
+                 )
+              => st (AbsExpr -> m (Maybe Type))
+    exprType' = liftM2 exprType  folder' getSigReturn'
 
-    folder' :: (Monad m, MonadState InferIterData st)
-            => st (TypeFolder m WrappedMaybe)
+    folder' :: ( MonadState InferIterData st
+               , Err.ErrorM m
+               , ScopedAbs UnknownType m
+               )
+            => st (TypeFolder m)
     folder' = liftM foldInfer getSigReturn'
 
-    getSigReturn' :: (Monad m, MonadState InferIterData st)
-                  => st (SigReturnGetter m WrappedMaybe)
-    getSigReturn' = do
-        gsr <- liftM mapLookupMaybe (gets fst)
-
-        return $ \path -> liftM WrapMaybe . gsr path . map unwrapMaybe
-
+    getSigReturn' :: (MonadState InferIterData st , ScopedAbs UnknownType m)
+                  => st (SigReturnGetter m)
+    getSigReturn' = liftM (mkSigReturnGetter . mapLookup) $ gets fst
 
 
 
 typeCheck :: Err.ErrorM m => AbsLocale Type -> m ()
 typeCheck l = scopedMapM_ checkLeaf ast
   where
+    checkLeaf :: ExprTypeM Type m => AbsTranslation Type -> m ()
+    checkLeaf tr = do
+      ret <- exprType' (tr^.trImpl)
+
+      when (isNothing ret)
+           (Err.panic "typeCheck: exprType returned Nothing")
+
+    exprType' :: ExprTypeM Type m => AbsExpr -> m (Maybe Type)
+    exprType' = exprType (foldCheck getSigReturn) getSigReturn
+
+    getSigReturn :: ExprTypeM Type m => SigReturnGetter m
+    getSigReturn = maybeToThrow . mkSigReturnGetter . astLookup $ ast
+
     ast :: AbsAST Type
     ast = l^.localeAST
-
-    getSigReturn :: SigReturnGetter m Identity
-    getSigReturn = astLookupOrThrow ast
-
-    checkLeaf :: ExprTypeConstr m Identity
-              => AbsTranslation Type
-              -> ScopedAbsAST Type m (Identity Type)
-    checkLeaf = exprType (foldCheck getSigReturn) getSigReturn . _trImpl
-
-
-
-type ExprTypeConstr m f = ( Err.ErrorM m
-                          , Traversable f
-                          , Applicative f
-                          , Semigroup (f Type)
-                          )
-
-type TypeFolder m f = f Type
-                    -> [AbsExpr]
-                    -> ScopedAbsAST Type m (f Type)
-
-type SigReturnGetter m f = AbsoluteVarPath
-                        -> [f Type]
-                        -> ScopedAbsAST Type m (f Type)
-
-
-exprType :: ExprTypeConstr m f
-         => TypeFolder m f
-         -> SigReturnGetter m f
-         -> AbsExpr
-         -> ScopedAbsAST ret m (f Type)
-exprType fold getSigReturn expr
-  | is _IntL    = return (pure TInt)
-  | is _DoubleL = return (pure TDouble)
-  | is _BoolL   = return (pure TBool)
-  | is _CharL   = return (pure TChar)
-  | is _StringL = return (pure TString)
-  | is _SConcat = do
-      ret <- fold (pure TString) (expr^?!_SConcat)
-
-      sequenceA $ ret <&> \case
-        TString -> return TString
-        other   -> Err.typeError TString other
-
-  | is _Array =
-      (fmap.fmap) TArray $ fold Nothing (expr^?!_Array)
-
-  | is _Cond = do
-      let (condition, ifT, ifF) = expr^?!_Cond
-      fold (Just TBool) [condition]
-      fold Nothing [ifT, ifF]
-
-  | is _Funcall = do
-      let (fnPath, args) = expr^?!_Funcall
-      argTypes <- mapM (exprType fold getSigReturn) args
-
-      sequence $ getSigReturn fnPath argTypes
-
-  | is _Builtin = return $ pure (expr^?!_Builtin)
-  where
-    is prism = has prism expr
-
-
-
--- TypeFolders
-
-foldInfer :: Semigroup (f Type) => SigReturnGetter m f -> TypeFolder m f
-foldInfer getSigReturn t exprs = do
-    types <- forM exprs $ exprType (foldInfer getSigReturn) getSigReturn
-
-    foldl' (<>) t types
-
-
-
-foldCheck :: Semigroup (f [Type]) => SigReturnGetter m f -> TypeFolder m f
-foldCheck getSigReturn t exprs = do
-    types <- forM exprs $ exprType (foldCheck getSigReturn) getSigReturn
-
-    sequence $ foldl' checkEqual [t] $ (map.fmap) (:[]) types
-  where
-    checkEqual expected found = sequence $ (expected <> found) <&> \case
-        [t]   -> return t
-
-        [t,u]
-          | t == u    -> return t
-          | otherwise -> Err.typeError t u
-
-        ts    -> Err.panic $ "foldCheck: Unexpected result length =" ++ show (length ts)
-
-
-
--- SigReturnGetters
-
-mapLookupMaybe :: FlatAbsASTMap Type -> SigReturnGetter m Maybe
-mapLookupMaybe astMap path paramTypes =
-    return $ view (trSignature.sigReturn) <$> Map.lookup path astMap
-
-
-mapLookupOrThrow :: FlatAbsASTMap Type -> SigReturnGetter m Identity
-mapLookupOrThrow astMap path paramTypes = do
-    let paramTypes' = map (Just . runIdentity) paramTypes
-
-    mapLookupMaybe astMap path paramTypes' >>= \case
-      Just t  -> return $ Identity t
-      Nothing -> Err.signatureNotFound path (map runIdentity paramTypes)
-
-
-astLookupMaybe :: AbsAST Type -> SigReturnGetter m Maybe
-astLookupMaybe ast path paramTypes =
-    return $ view (trSignature.sigReturn) <$> ast ^? atPath path
-
-
-astLookupOrThrow :: AbsAST Type -> SigReturnGetter m Identity
-astLookupOrThrow ast path paramTypes = do
-    let paramTypes' = map (Just . runIdentity) paramTypes
-
-    astLookupMaybe ast path paramTypes' >>= \case
-      Just t  -> return $ Identity t
-      Nothing -> Err.signatureNotFound path (map runIdentity paramTypes)
-
-
--- Instances
-
-instance Semigroup a => Semigroup (Identity a) where
-    Identity x <> Identity y = Identity (x <> y)
-
-
-newtype WrappedMaybe a = WrapMaybe { unwrapMaybe :: Maybe a }
-    deriving (Eq, Ord, Monoid, Functor, Applicative, Foldable, Traversable)
-
-instance Semigroup (WrappedMaybe a) where
-    (<>) = mappend

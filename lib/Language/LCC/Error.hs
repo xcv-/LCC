@@ -27,26 +27,26 @@ data Error where
                     -> Error
 
   RelativePath      :: forall path ret. (Show path, Show ret)
-                    => { scope :: TranslationScopeData path ret
+                    => { scope :: ScopeData path ret
                        , path  :: RelativeVarPath
                        }
                     -> Error
 
   Type              :: forall path ret. (Show path, Show ret)
-                    => { scope    :: TranslationScopeData path ret
+                    => { scope    :: ScopeData path ret
                        , expected :: Type
                        , found    :: Type
                        }
                     -> Error
 
   SymbolNotFound    :: forall path ret. (Show path, Show ret)
-                    => { scope       :: TranslationScopeData path ret
+                    => { scope       :: ScopeData path ret
                        , missingPath :: AbsoluteVarPath
                        }
                     -> Error
 
   SignatureNotFound :: forall path ret. (Show path, Show ret)
-                    => { scope       :: TranslationScopeData path ret
+                    => { scope       :: ScopeData path ret
                        , missingPath :: AbsoluteVarPath
                        , argTypes    :: [Type]
                        }
@@ -64,7 +64,7 @@ data Error where
                     -> Error
 
   ScopedPanic       :: forall path ret. (Show path, Show ret)
-                    => { scope        :: TranslationScopeData path ret
+                    => { scope        :: ScopeData path ret
                        , panicMessage :: String
                        }
                     -> Error
@@ -113,48 +113,45 @@ instance Show Error where
 
 
 
-invalidRelativePath :: (ErrorM m, Show path, Show ret)
-                    => RelativeVarPath
-                    -> ScopedAST path ret m a
+invalidRelativePath :: (ErrorM m, Scoped path ret m, Show path, Show ret)
+                    => RelativeVarPath -> m a
 invalidRelativePath path = do
-    scope <- asks (view scopeData)
+    scope <- ask
     ME.throwError RelativePath {..}
 
 
 
-typeError :: (ErrorM m, Show path, Show ret)
-          => Type
-          -> Type
-          -> ScopedAST path ret m a
+typeError :: (ErrorM m, Scoped path ret m, Show path, Show ret)
+          => Type -> Type -> m a
 typeError expected found = do
-    scope <- asks (view scopeData)
+    scope <- ask
     ME.throwError Type {..}
 
 
 
-symbolNotFound :: (ErrorM m, Show path, Show ret)
-               => AbsoluteVarPath
-               -> ScopedAST path ret m a
+symbolNotFound :: (ErrorM m, Scoped path ret m, Show path, Show ret)
+               => AbsoluteVarPath -> m a
 symbolNotFound missingPath = do
-    scope <- asks (view scopeData)
+    scope <- ask
     ME.throwError SymbolNotFound {..}
 
 
 
-signatureNotFound :: (ErrorM m, Show path, Show ret)
-                  => AbsoluteVarPath
-                  -> [Type]
-                  -> ScopedAST path ret m a
+signatureNotFound :: (ErrorM m, Scoped path ret m, Show path, Show ret)
+                  => AbsoluteVarPath -> [Type] -> m a
 signatureNotFound missingPath argTypes = do
-    scope <- asks (view scopeData)
+    scope <- ask
     ME.throwError SignatureNotFound {..}
 
 
-panic :: (ErrorM m, Show path, Show ret)
-      => String
-      -> ScopedAST path ret m a
+cycle :: ErrorM m => [AbsTranslation UnknownType] -> m a
+cycle = ME.throwError . Cycle
+
+
+panic :: (ErrorM m, Scoped path ret m, Show path, Show ret)
+      => String -> m a
 panic panicMessage = do
-    scope <- asks (view scopeData)
+    scope <- ask
     ME.throwError ScopedPanic {..}
 
 
