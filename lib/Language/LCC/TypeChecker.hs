@@ -14,6 +14,7 @@ import Control.Monad.Reader (ask)
 
 import Data.Foldable
 import Data.List (intercalate)
+import Data.Maybe
 import Data.Monoid
 import Data.Traversable
 
@@ -21,6 +22,18 @@ import Text.Printf (printf)
 
 import Language.LCC.Types
 import qualified Language.LCC.Error as Err
+
+
+typeOf :: (Err.ErrorM m, ScopedAbs ret m, Show ret)
+       => AbsExpr -> AbsAST Type -> m Type
+typeOf expr ast =
+    exprType' expr >>= maybe err return
+  where
+    err = Err.panic ("typeOf: Could not resolve type of " ++ show expr)
+
+    exprType' = exprType fold getSigReturn
+    fold = foldInfer getSigReturn
+    getSigReturn = maybeToThrow . mkSigReturnGetter . astLookup $ ast
 
 
 type ExprTypeM ret m = (Err.ErrorM m, ScopedAbs ret m, Show ret)
@@ -71,6 +84,13 @@ exprType fold getSigReturn expr
 
 foldInfer :: ExprTypeM ret m => SigReturnGetter m -> TypeFolder m
 foldInfer getSigReturn known =
+    foldl' (liftM2 (<|>)) (return known) . map exprType'
+  where
+    exprType' = exprType (foldInfer getSigReturn) getSigReturn
+
+
+foldInferNothrow :: ExprTypeM ret m => SigReturnGetter m -> TypeFolder m
+foldInferNothrow getSigReturn known =
     foldl' altSkipErrors (return known) . map exprType'
   where
     exprType' = exprType (foldInfer getSigReturn) getSigReturn
@@ -100,26 +120,22 @@ foldCheck getSigReturn expected exprs =
 -- SigReturnGetters
 
 mapLookup :: FlatAbsASTMap Type -> AbsolutePath -> [Maybe Type] -> Maybe Type
-mapLookup astMap path paramTypes = astMap ^? ix path.trSignature.sigReturn
+mapLookup astMap path paramTypes = astMap ^? ix path.trSig.sigReturn
 
 astLookup :: AbsAST Type -> AbsolutePath -> [Maybe Type] -> Maybe Type
-astLookup ast path paramTypes = ast ^? atPath path.trSignature.sigReturn
+astLookup ast path paramTypes = ast ^? atPath path.trSig.sigReturn
 
 
 mkSigReturnGetter :: Scoped path ret m
                   => (AbsolutePath -> [Maybe Type] -> Maybe Type)
                   -> SigReturnGetter m
-mkSigReturnGetter lookup path paramTypes = do
-    ScopeData tr <- ask
+mkSigReturnGetter lookup path paramTypes =
+    case path of
+      VAbsolutePath path ->
+        return $ lookup (path^.from absolute) paramTypes
 
-    return $
-      case path of
-        VAbsolutePath path ->
-          lookup (path^.from absolute) paramTypes
-
-        VParamName name ->
-          tr^?trSignature.sigParams.folded.filtered (matchParam name).paramType
-
+      VParamName name ->
+        previewS $ trSig.sigParams.folded.filtered (matchParam name).paramType
   where
     matchParam :: String -> Param -> Bool
     matchParam name p = p^.paramName == name

@@ -33,10 +33,15 @@ data JavaTarget = JavaTarget
     }
 
 
+type Writing m = forall s. IsString s => (MonadWriter [s] m, MonadReader JavaTarget m)
+
+(||>) :: Writing s m
+
+
 builtinParam :: Type -> Param
 builtinParam pType = Param pType "<?>"
 
-builtins :: Map.Map TranslationSignature T.Text
+builtins :: Map.Map TranslationSignature String
 builtins = Map.fromList $ builtinMap
     [ (["str"], [TChar  ], TString, "Character.toString")
     , (["str"], [TString], TString, ""                  )
@@ -72,12 +77,11 @@ builtins = Map.fromList $ builtinMap
     ]
   where
     builtinMap = map $ \(path, paramTypes, ret, replacement) ->
-        ( Signature { sigPath = AbsVarPath path
-                    , sigParams = map builtinParam paramTypes
-                    , sigReturn = ret
-                    }
-        , replacement
-        )
+        let sig = Signature { _sigPath   = path^.from absolute
+                            , _sigParams = map builtinParam paramTypes
+                            , _sigReturn = ret
+                            }
+        in (path, (sig, replacement))
 
 
 builtinsClass :: JavaTarget -> Int -> T.Text

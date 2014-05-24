@@ -1,5 +1,6 @@
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ExistentialQuantification #-}
@@ -12,10 +13,25 @@ import Control.Monad.Reader
 import Data.Functor
 import Data.List
 
-import qualified Text.Parsec as Parsec
+import Text.Parsec
 import Text.Printf (printf)
 
 import Language.LCC.Types
+
+
+newtype Scope path ret = Scope { _scopeTr :: Translation path ret }
+
+makeLenses ''Scope
+
+
+instance (Show path, Show ret) => Show (Scope path ret) where
+    show s =
+        "[" ++ posStr ++ "] " ++ show (s^.scopeTr.trSig)
+      where
+        posStr = printf "\"%s\" l%d c%d"
+            (sourceName srcPos) (sourceLine srcPos) (sourceColumn srcPos)
+
+        srcPos = s^.scopeTr.trSourcePos
 
 
 type ErrorM m = ME.MonadError Error m
@@ -23,30 +39,30 @@ type ErrorM m = ME.MonadError Error m
 
 data Error where
 
-  Parse             :: { parseError :: Parsec.ParseError }
+  Parse             :: { parseError :: ParseError }
                     -> Error
 
   RelativePath      :: forall path ret. (Show path, Show ret)
-                    => { scope :: ScopeData path ret
+                    => { scope :: Scope path ret
                        , path  :: RelativeVarPath
                        }
                     -> Error
 
   Type              :: forall path ret. (Show path, Show ret)
-                    => { scope    :: ScopeData path ret
+                    => { scope    :: Scope path ret
                        , expected :: Type
                        , found    :: Type
                        }
                     -> Error
 
   SymbolNotFound    :: forall path ret. (Show path, Show ret)
-                    => { scope       :: ScopeData path ret
+                    => { scope       :: Scope path ret
                        , missingPath :: AbsoluteVarPath
                        }
                     -> Error
 
   SignatureNotFound :: forall path ret. (Show path, Show ret)
-                    => { scope       :: ScopeData path ret
+                    => { scope       :: Scope path ret
                        , missingPath :: AbsoluteVarPath
                        , argTypes    :: [Type]
                        }
@@ -64,7 +80,7 @@ data Error where
                     -> Error
 
   ScopedPanic       :: forall path ret. (Show path, Show ret)
-                    => { scope        :: ScopeData path ret
+                    => { scope        :: Scope path ret
                        , panicMessage :: String
                        }
                     -> Error
@@ -96,11 +112,11 @@ instance Show Error where
 
   show SignatureConflict {..} =
       intercalate "\n" $
-          "Found conflicting signatures:" : map (show . view trSignature) conflicting
+          "Found conflicting signatures:" : map (show . view trSig) conflicting
 
   show Cycle {..} =
       intercalate "\n" $
-          "Dependency cycle found:" : map (show . view trSignature) cyclicSigs
+          "Dependency cycle found:" : map (show . view trSig) cyclicSigs
 
   show Interface {..} =
       intercalate "\n" $
@@ -112,11 +128,10 @@ instance Show Error where
 
 
 
-
 invalidRelativePath :: (ErrorM m, Scoped path ret m, Show path, Show ret)
                     => RelativeVarPath -> m a
 invalidRelativePath path = do
-    scope <- ask
+    scope <- viewS (to Scope)
     ME.throwError RelativePath {..}
 
 
@@ -124,7 +139,7 @@ invalidRelativePath path = do
 typeError :: (ErrorM m, Scoped path ret m, Show path, Show ret)
           => Type -> Type -> m a
 typeError expected found = do
-    scope <- ask
+    scope <- viewS (to Scope)
     ME.throwError Type {..}
 
 
@@ -132,7 +147,7 @@ typeError expected found = do
 symbolNotFound :: (ErrorM m, Scoped path ret m, Show path, Show ret)
                => AbsoluteVarPath -> m a
 symbolNotFound missingPath = do
-    scope <- ask
+    scope <- viewS (to Scope)
     ME.throwError SymbolNotFound {..}
 
 
@@ -140,7 +155,7 @@ symbolNotFound missingPath = do
 signatureNotFound :: (ErrorM m, Scoped path ret m, Show path, Show ret)
                   => AbsoluteVarPath -> [Type] -> m a
 signatureNotFound missingPath argTypes = do
-    scope <- ask
+    scope <- viewS (to Scope)
     ME.throwError SignatureNotFound {..}
 
 
@@ -151,7 +166,7 @@ cycle = ME.throwError . Cycle
 panic :: (ErrorM m, Scoped path ret m, Show path, Show ret)
       => String -> m a
 panic panicMessage = do
-    scope <- ask
+    scope <- viewS (to Scope)
     ME.throwError ScopedPanic {..}
 
 

@@ -119,7 +119,7 @@ rebuild ns =
 
 
 data Translation path ret =
-    Translation { _trSignature :: Signature AbsolutePath ret
+    Translation { _trSig :: Signature AbsolutePath ret
                 , _trImpl      :: Expr path
                 , _trSourcePos :: Parsec.SourcePos
                 }
@@ -158,4 +158,4 @@ atPath path =
 
 lookupParam :: Translation path ret -> PathNode -> Maybe Param
 lookupParam t name =
-    t^?trSignature.sigParams.folded.filtered (\p -> p^.paramName == name)
+    t^?trSig.sigParams.folded.filtered (\p -> p^.paramName == name)

@@ -68,3 +68,10 @@ instance (Show path, Show ret) => Show (Signature path ret) where
     where
       paramList = intercalate ", " $ map show _sigParams
 
+
+
+paramSig :: FromParamName path => Param -> Signature path Type
+paramSig Param {..} = Signature { _sigPath = mkParamName _paramName
+                                , _sigParams = []
+                                , _sigReturn = _paramType
+                                }

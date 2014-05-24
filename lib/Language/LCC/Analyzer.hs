@@ -11,7 +11,6 @@ import Control.Applicative
 import Control.Arrow (first, second)
 import Control.Lens
 import Control.Monad (liftM, liftM2, when, unless)
-import Control.Monad.Reader (asks)
 import Control.Monad.State.Strict (MonadState, StateT, execStateT,
                                    get, gets, modify)
 
@@ -82,7 +81,7 @@ toAbsolute = localeAST.traverse %%~ (./> trImpl.traverse %%~ toAbsPath)
     toAbsPath (RVAbsolutePath path) = return $ VAbsolutePath path
     toAbsPath (RVParamName name)    = return $ VParamName name
     toAbsPath rp@(RVRelativePath path) = do
-        relTo <- asks (^.scopeTr.trSignature.sigPath.absolute)
+        relTo <- viewS $ trSig.sigPath.absolute
 
         liftM VAbsolutePath (toAbsPath' relTo path)
       where
@@ -117,7 +116,7 @@ verifyNameLookup l = scopedMapM_ (mapM_ verifyPath . view trImpl)
 
     lookupPath :: ScopedAbs ret m => AbsoluteVarPath -> m Bool
     lookupPath path = do
-        asks (^.scopeTr) >>= \t -> return $
+        getS >>= \t -> return $
           case path of
             (VAbsolutePath path) -> has (localeAST.atPath (path^.from absolute)) l
             (VParamName name)    -> has _Just $ lookupParam t name
@@ -159,8 +158,8 @@ inferReturnTypes l =
           case retType of
             Nothing -> second (t:)
 
-            Just ret -> let setter = at (t^.trSignature.sigPath)
-                            newVal = t & trSignature.sigReturn .~ ret
+            Just ret -> let setter = at (t^.trSig.sigPath)
+                            newVal = t & trSig.sigReturn .~ ret
                         in first (setter .~ Just newVal)
 
     revForM_ :: Monad m => [a] -> (a -> m b) -> m ()
@@ -178,7 +177,7 @@ inferReturnTypes l =
                , ScopedAbs UnknownType m
                )
             => st (TypeFolder m)
-    folder' = liftM foldInfer getSigReturn'
+    folder' = liftM foldInferNothrow getSigReturn'
 
     getSigReturn' :: (MonadState InferIterData st , ScopedAbs UnknownType m)
                   => st (SigReturnGetter m)

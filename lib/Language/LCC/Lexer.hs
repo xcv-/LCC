@@ -79,8 +79,8 @@ cppKeywords = ["alignas",   "alignof",       "and",          "and_eq",
 
 lccDef :: Tok.GenLanguageDef T.Text () Identity
 lccDef = Tok.LanguageDef
-  { Tok.commentStart   = ""
-  , Tok.commentEnd     = ""
+  { Tok.commentStart   = "/*"
+  , Tok.commentEnd     = "*/"
   , Tok.commentLine    = "#"
   , Tok.nestedComments = False
   , Tok.identStart     = P.letter
