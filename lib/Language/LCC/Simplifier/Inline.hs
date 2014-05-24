@@ -37,7 +37,7 @@ inlineExpr expr
       let (c,t,f) = expr^?!_Cond
       in liftM3 Cond (inlineExpr c) (inlineExpr t) (inlineExpr f)
 
-  | is _Funcall = liftM (fromMaybe expr) $ inlineFuncall (expr^?!_Funcall)
+  | is _Funcall = inlineFuncall expr (expr^?!_Funcall)
 
   | otherwise = return expr
 
@@ -46,9 +46,10 @@ inlineExpr expr
 
 
 inlineFuncall :: (Err.ErrorM m, ScopedAbs Type m, MonadReader CallStack m)
-              => (AbsoluteVarPath, [AbsExpr])
-              -> Maybe AbsExpr
-inlineFuncall f args =
+              => AbsExpr
+              -> (AbsoluteVarPath, [AbsExpr])
+              -> m AbsExpr
+inlineFuncall expr (f,args) =
     case f of
       VParamName _paramName -> do
         _paramType <- getAST >>= typeOf expr
@@ -62,19 +63,22 @@ inlineFuncall f args =
         case findTrans ast (p^.from absolute) of
           Nothing -> Err.symbolNotFound f
 
-          Just (Builtin _) -> expr
-
-          Just tr -> do
-            inlinedArgs <- mapM inlineExpr args
-            extendStack (bindParams tr inlinedArgs)
-                        (tr ./> inlineExpr . view trImpl)
+          Just tr
+            | has (trImpl._Builtin) tr -> return expr
+            | otherwise -> do
+                inlinedArgs <- mapM inlineExpr args
+                extendStack (bindParams tr inlinedArgs)
+                            (tr ./> inlineExpr . view trImpl)
 
 
 
 getBoundParams :: MonadReader CallStack m => m [BoundParam]
 getBoundParams = asks (concat . map snd . snd)
 
-getBoundParam :: Err.ErrorM m => [BoundParam] -> Param -> m AbsExpr
+getBoundParam :: (Err.ErrorM m, ScopedAbs Type m)
+              => [BoundParam]
+              -> Param
+              -> m AbsExpr
 getBoundParam boundParams param = do
     case lookup param boundParams of
       Just expr ->
