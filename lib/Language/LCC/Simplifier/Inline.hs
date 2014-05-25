@@ -33,14 +33,10 @@ inlineExpr :: (Err.ErrorM m, ScopedAbs Type m, MonadReader CallStack m)
 inlineExpr expr
   | is _Array   = liftM Array   $ mapM inlineExpr (expr^?!_Array)
   | is _SConcat = liftM SConcat $ mapM inlineExpr (expr^?!_SConcat)
-  | is _Cond    =
-      let (c,t,f) = expr^?!_Cond
-      in liftM3 Cond (inlineExpr c) (inlineExpr t) (inlineExpr f)
-
   | is _Funcall = inlineFuncall expr (expr^?!_Funcall)
-
-  | otherwise = return expr
-
+  | is _Cond    = let (c,t,f) = expr^?!_Cond
+                  in liftM3 Cond (inlineExpr c) (inlineExpr t) (inlineExpr f)
+  | otherwise   = return expr
   where
     is prism = has prism expr
 

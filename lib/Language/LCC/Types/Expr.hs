@@ -9,27 +9,24 @@ import Data.Functor
 import Data.Monoid
 import Data.Traversable
 
+import Language.LCC.Types.Path
 import Language.LCC.Types.Signature
 
 
 data Expr path
-    = IntL    { _exprInt      :: Integer     }
-    | DoubleL { _exprDouble   :: Double      }
-    | BoolL   { _exprBool     :: Bool        }
-    | CharL   { _exprChar     :: Char        }
-    | StringL { _exprString   :: String      }
-    | Builtin { _exprBtInType :: Type        }
-    | SConcat { _exprStrings  :: [Expr path] }
-    | Array   { _exprArray    :: [Expr path] }
+    = IntL    Integer
+    | DoubleL Double
+    | BoolL   Bool
+    | CharL   Char
+    | StringL String
+    | SConcat [Expr path]
+    | Array   [Expr path]
 
-    | Funcall { _exprFunction :: path
-              , _exprArgs     :: [Expr path]
-              }
+    | Funcall path [Expr path]
 
-    | Cond    { _exprCondition   :: Expr path
-              , _exprConsequent  :: Expr path
-              , _exprAlternative :: Expr path
-              }
+    | Cond    (Expr path) (Expr path) (Expr path)
+
+    | Builtin (Signature AbsolutePath Type)
     deriving (Ord, Eq, Show)
 
 
@@ -39,11 +36,11 @@ instance Functor Expr where
     fmap f (BoolL x)           = BoolL x
     fmap f (CharL x)           = CharL x
     fmap f (StringL x)         = StringL x
-    fmap f (Builtin t)         = Builtin t
     fmap f (SConcat ss)        = SConcat $ (fmap.fmap) f ss
     fmap f (Array xs)          = Array $ (fmap.fmap) f xs
     fmap f (Funcall path args) = Funcall (f path) $ (fmap.fmap) f args
     fmap f (Cond cond ifT ifF) = Cond (fmap f cond) (fmap f ifT) (fmap f ifF)
+    fmap f (Builtin sig)       = Builtin sig
 
 
 instance Foldable Expr where
@@ -61,7 +58,7 @@ instance Traversable Expr where
     traverse f (BoolL x)           = pure $ BoolL x
     traverse f (CharL x)           = pure $ CharL x
     traverse f (StringL x)         = pure $ StringL x
-    traverse f (Builtin t)         = pure $ Builtin t
+    traverse f (Builtin sig)       = pure $ Builtin sig
 
     traverse f (SConcat ss)        = SConcat <$> (traverse.traverse) f ss
 
@@ -76,5 +73,4 @@ instance Traversable Expr where
 
 
 
-makeLenses ''Expr
 makePrisms ''Expr

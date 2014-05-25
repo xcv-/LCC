@@ -1,7 +1,9 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Language.LCC.Target where
 
-import Data.String
+import Control.Applicative
+
+import qualified Data.Text.Lazy as T
 
 import System.FilePath
 
@@ -10,18 +12,12 @@ import Language.LCC.Types
 
 
 class Target t where
-    injectBuiltins :: Err.ErrorM m
+    injectBuiltins :: (Err.ErrorM m, Applicative m)
                    => t
-                   -> Locale path ret
-                   -> m (Locale path ret)
+                   -> AbsLocale UnknownType
+                   -> m (AbsLocale UnknownType)
 
-    runBuiltin :: (Err.ErrorM m, ScopedAbs Type m)
-               => t
-               -> AbsolutePath
-               -> [AbsExpr]
-               -> m (Maybe AbsExpr)
-
-    output :: IsString s
+    output :: Err.ErrorM m
            => t
            -> [AnalyzedLocale]
-           -> [(FilePath, s)]
+           -> m [(FilePath, T.Text)]

@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -6,11 +7,12 @@
 {-# LANGUAGE LambdaCase #-}
 module Language.LCC.Types.Path where
 
+import GHC.Exts (IsList(..))
+
 import Control.Applicative
-import Control.Comonad
 import Control.Lens
 
-import Data.Foldable (toList)
+import qualified Data.Foldable as Foldable
 import Data.List (intersperse)
 import Data.Monoid
 
@@ -45,45 +47,21 @@ lens |>~ a = lens %~ (|> a)
 
 
 
--- Overloaded constructors
-
-class FromAbsolute path where
-    mkAbsolute :: (Seq PathNode) -> path
-
-class FromParamName path where
-    mkParamName :: PathNode -> path
-
-class FromRelative path where
-    mkRelative :: (Seq PathNode) -> path
-
-
-
-instance FromRelative RelativeVarPath where
-    mkRelative = RVRelativePath
-
-
-instance FromParamName RelativeVarPath  where
-    mkParamName = RVParamName
-
-instance FromParamName AbsoluteVarPath where
-    mkParamName = VParamName
-
-
-instance FromAbsolute RelativeVarPath where
-    mkAbsolute = RVAbsolutePath
-
-instance FromAbsolute AbsoluteVarPath where
-    mkAbsolute = VAbsolutePath
-
-instance FromAbsolute AbsolutePath where
-    mkAbsolute = AbsolutePath
-
-
-
-
 -- Instances
 
-defaultShow = show . mconcat . intersperse "." . toList
+
+instance IsList (Seq.Seq a) where
+    type Item (Seq.Seq a) = a
+    toList = Foldable.toList
+    fromList = Seq.fromList
+
+instance IsList AbsolutePath where
+    type Item AbsolutePath = PathNode
+    toList = toList . view absolute
+    fromList = view (from absolute) . fromList
+
+
+defaultShow = mconcat . intersperse "." . toList
 
 instance Show RelativePath where
     show (RRelativePath path) = defaultShow path
@@ -106,7 +84,7 @@ instance Show AbsoluteVarPath where
 
 -- Lens
 
-absolute :: Iso' AbsolutePath (Seq.Seq PathNode)
+absolute :: Iso' AbsolutePath (Seq PathNode)
 absolute = iso (\(AbsolutePath path) -> path) AbsolutePath
 
 
@@ -133,55 +111,55 @@ instance Snoc AbsolutePath AbsolutePath PathNode PathNode where
 
 
 
-class RelativePrism path where
+class FromRelative path where
     _Relative :: Prism' path (Seq PathNode)
 
-class ParamNamePrism path where
+class FromParamName path where
     _ParamName :: Prism' path PathNode
 
-class AbsolutePrism path where
+class FromAbsolute path where
     _Absolute :: Prism' path (Seq PathNode)
 
 
 
 
-instance RelativePrism RelativePath where
+instance FromRelative RelativePath where
     _Relative = prism RRelativePath $ \case
         RRelativePath x -> Right x
         x               -> Left x
 
-instance RelativePrism RelativeVarPath where
+instance FromRelative RelativeVarPath where
     _Relative = prism RVRelativePath $ \case
         RVRelativePath x -> Right x
         x                -> Left x
 
 
-instance ParamNamePrism RelativeVarPath where
+instance FromParamName RelativeVarPath where
     _ParamName = prism RVParamName $ \case
         RVParamName x -> Right x
         x             -> Left x
 
-instance ParamNamePrism AbsoluteVarPath where
+instance FromParamName AbsoluteVarPath where
     _ParamName = prism VParamName $ \case
         VParamName x -> Right x
         x            -> Left x
 
 
-instance AbsolutePrism RelativePath where
+instance FromAbsolute RelativePath where
     _Absolute = prism RAbsolutePath $ \case
         RAbsolutePath x -> Right x
         x               -> Left x
 
-instance AbsolutePrism AbsolutePath where
+instance FromAbsolute AbsolutePath where
     _Absolute = prism AbsolutePath $ Right . view absolute
 
 
-instance AbsolutePrism RelativeVarPath where
+instance FromAbsolute RelativeVarPath where
     _Absolute = prism RVAbsolutePath $ \case
         RVAbsolutePath x -> Right x
         x                -> Left x
 
-instance AbsolutePrism AbsoluteVarPath where
+instance FromAbsolute AbsoluteVarPath where
     _Absolute = prism VAbsolutePath $ \case
         VAbsolutePath x -> Right x
         x               -> Left x

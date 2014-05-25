@@ -1,100 +1,65 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ViewPatterns #-}
 module Main where
 
 import Control.Applicative
-import Control.Monad.State
-import Control.Monad.Error
+import Control.Monad
 
-import System.Directory
-import System.Environment
-import System.FilePath
-
-import Text.Printf (printf)
+import Data.Functor
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
+import qualified Data.Text.Lazy as TL
+import qualified Data.Text.Lazy.IO as TL
 
-import LCC.Parser
-import LCC.State
-import LCC.Analyzer
-import LCC.Types
-import LCC.Target
-import qualified LCC.Output.Java as J
+import Text.PrettyPrint.Leijen.Text (putDoc, pretty)
 
+import System.Directory
+import System.Environment
+import System.Exit
+import System.FilePath
 
-type LocaleErrorPair = (Maybe RawLocale, LocaleError)
+import Language.LCC.Types
 
+import Language.LCC.Analyzer
+import Language.LCC.Parser
+import Language.LCC.Pretty
+import Language.LCC.Target
+import Language.LCC.Targets.Java
+import qualified Language.LCC.Error as Err
 
-parseLocales :: FilePath -> IO [Either LocaleError RawLocale]
-parseLocales directory = do
-    files <- getDirectoryFiles directory
-
-    forM files $ \file -> do
-        putStrLn $ "Found file: " ++ file
-        parseLocale file <$> T.readFile file
-  where
-    getDirectoryFiles :: FilePath -> IO [FilePath]
-    getDirectoryFiles dir =
-        map (dir </>) <$> getDirectoryContents dir >>= filterM doesFileExist
-
-
-compileLocale :: Target t => t
-              -> RawLocale
-              -> Either LocaleErrorPair (Locale, LocaleState)
-compileLocale target locale =
-    case runLocale emptyState compiled of
-        Right x -> Right x
-        Left e  -> Left (Just locale, e)
-  where
-    compiled = setEnv target >> compile locale
-
-
-loadLocales :: Target t => t
-            -> FilePath
-            -> IO (Either LocaleErrorPair [(Locale, LocaleState)])
-loadLocales target directory =
-    mapM applyCompile <$> parseLocales directory
-  where
-    applyCompile :: Either LocaleError RawLocale
-                 -> Either (Maybe RawLocale, LocaleError) (Locale, LocaleState)
-    applyCompile (Right locale) = compileLocale target locale
-    applyCompile (Left err)     = Left (Nothing, err)
-
-
-writeOutput :: FilePath -> T.Text -> IO ()
-writeOutput path content = do
-    putStrLn $ "Generating " ++ path
-    createDirectoryIfMissing True (takeDirectory path)
-    T.writeFile path content
-    putStrLn "Done."
 
 
 main :: IO ()
 main = do
     args <- getArgs
 
-    case args of
-        ["help"] ->
-            printHelp
+    rc <- case args of
+            ["help"] ->
+                printHelp
 
-        ["help", topic] ->
-            printTopicHelp topic
+            ["help", topic] ->
+                printTopicHelp topic
 
-        ["parse", indir] ->
-            printParsed indir
+            ["parse", indir] ->
+                printParsed indir
 
-        ["compile", "java", indir, outdir, package] ->
-            compileToJava indir outdir package
+            ["compile", "java", indir, outdir, package] ->
+                compileToJava indir outdir package
 
-        _ ->
-            putStrLn "Invalid arguments" >> printHelp
+            _ -> do
+                putStrLn "Invalid arguments"
+                printHelp
+                return (ExitFailure 1)
+
+    exitWith rc
 
 
-printHelp :: IO ()
+printHelp :: IO ExitCode
 printHelp = do
     progName <- getProgName
 
-    putStrLn . unlines $
+    mapM_ putStrLn
       [ "Syntax: " ++ progName ++ " compile <target-language> <opts...>"
       , "Available target languages:"
       , "\tjava"
@@ -105,10 +70,12 @@ printHelp = do
       , "\tjava"
       ]
 
+    return ExitSuccess
 
-printTopicHelp :: String -> IO ()
-printTopicHelp "lc-lang" =
-    putStrLn . unlines $
+
+printTopicHelp :: String -> IO ExitCode
+printTopicHelp "lc-lang" = do
+    mapM_ putStrLn
       [ "LC is a simple declarative language for static application localization."
       , "It compiles directly to units of a given output language so it can be"
       , "compiled statically into the application, allowing for compile-time"
@@ -149,11 +116,12 @@ printTopicHelp "lc-lang" =
       , "At compilation time, all locale files are scanned, checked for type-correctness,"
       , "inconsistencies, unknown function calls and missing translations."
       ]
+    return ExitSuccess
 
 printTopicHelp "java" = do
     progName <- getProgName
 
-    putStrLn . unlines $
+    mapM_ putStrLn
       [ "Syntax: " ++ progName
                    ++ " compile"
                    ++ " java"
@@ -166,50 +134,98 @@ printTopicHelp "java" = do
       , ""
       , "Note: The name of the result interface is input-directory"
       ]
+    return ExitSuccess
+
 
 printTopicHelp topic = do
     progName <- getProgName
 
-    putStrLn . unlines $
+    mapM_ putStrLn
       [ "Unknown help topic: " ++ topic
       , "Note: Type '" ++ progName ++ " help' for a list of topics"
       ]
+    return (ExitFailure 2)
 
 
-printParsed :: FilePath -> IO ()
-printParsed indir = mapM_ print =<< parseLocales indir
 
+printParsed :: FilePath -> IO ExitCode
+printParsed indir = do
+    files <- loadFiles indir
 
-compileGeneric :: Target t => FilePath -> t -> IO ()
-compileGeneric indir target =
-    loadLocales target indir >>= either printErrorPair process
+    let parsed = mapM (uncurry parseLocale) files
+
+    either displayError printPrettified parsed
   where
-    process :: [(Locale, LocaleState)] -> IO ()
-    process = either printError writeAll . (checkInterfaces >=> runOutput)
-
-    runOutput :: [(Locale, LocaleState)] -> Either LocaleError [(FilePath, T.Text)]
-    runOutput [] = return []
-    runOutput (unzip -> (lcs, st0:_)) = fst <$> runLocale st0 (output target lcs)
-
-    writeAll :: [(FilePath, T.Text)] -> IO ()
-    writeAll = mapM_ (uncurry writeOutput)
-
-    printError e   = printErrorPair (Nothing, e)
-    printErrorPair = putStrLn . formatErrorPair
-
-    formatErrorPair (Nothing, e) = "\n*** Error ***\n" ++ show e
-    formatErrorPair (Just lc, e) = "\n*** Error in " ++ lcName lc ++ " ***\n"
-                                   ++ show e
+    printPrettified ls = ExitSuccess <$ do
+        forM_ ls $ \l -> do
+          putStrLn $ "##### " ++ _localeName l ++ " #####"
+          putDoc (pretty l)
+          putStrLn "" >> putStrLn ""
 
 
-compileToJava :: FilePath -> FilePath -> String -> IO ()
+
+compileToJava :: FilePath -> FilePath -> String -> IO ExitCode
 compileToJava indir outdir package =
     compileGeneric indir
-      J.JavaTarget
-        { J.javaTabWidth      = 4
-        , J.javaExpandTab     = False
-        , J.javaDirname       = outdir
-        , J.javaPackage       = package
-        , J.javaInterfaceName = last $ splitDirectories indir
+      JavaTarget
+        { javaTabWidth      = 4
+        , javaExpandTab     = False
+        , javaDirname       = outdir
+        , javaPackage       = package
+        , javaInterfaceName = last $ splitDirectories indir
         }
 
+
+compileGeneric :: Target t => FilePath -> t -> IO ExitCode
+compileGeneric indir target = do
+    files <- loadFiles indir
+
+    let processed = processLocales target files
+
+    either displayError writeOutput processed
+
+
+processLocales :: (Applicative m, Err.ErrorM m, Target t)
+               => t
+               -> [(FilePath, T.Text)]
+               -> m [(FilePath, TL.Text)]
+processLocales target files = do
+    parsed   <- mapM (uncurry parseLocale) files
+    analyzed <- mapM (analyze target) parsed
+
+    output target analyzed
+
+
+
+loadFiles :: FilePath -> IO [(FilePath, T.Text)]
+loadFiles directory = do
+    files <- getDirectoryFiles directory
+
+    forM files $ \file -> do
+        putStrLn ("Found file: " ++ file)
+        content <- T.readFile file
+        return (file, content)
+  where
+    getDirectoryFiles :: FilePath -> IO [FilePath]
+    getDirectoryFiles dir = do
+        contents <- getDirectoryContents dir
+
+        filterM doesFileExist $ map (dir </>) contents
+
+
+writeOutput :: [(FilePath, TL.Text)] -> IO ExitCode
+writeOutput outputData = do
+    forM_ outputData $ \(file, content) -> do
+        createDirectoryIfMissing True (takeDirectory file)
+        putStrLn $ "Writing " ++ file
+        TL.putStrLn content
+
+    putStrLn "Done."
+    return ExitSuccess
+
+
+displayError :: Err.Error -> IO ExitCode
+displayError e = do
+    putStrLn $ "\n* Error: " ++ show e
+    putStrLn "\nErrors occurred, aborting"
+    return (ExitFailure 3)

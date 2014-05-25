@@ -24,18 +24,7 @@ newtype Scope path ret = Scope { _scopeTr :: Translation path ret }
 makeLenses ''Scope
 
 
-instance (Show path, Show ret) => Show (Scope path ret) where
-    show s =
-        "[" ++ posStr ++ "] " ++ show (s^.scopeTr.trSig)
-      where
-        posStr = printf "\"%s\" l%d c%d"
-            (sourceName srcPos) (sourceLine srcPos) (sourceColumn srcPos)
-
-        srcPos = s^.scopeTr.trSourcePos
-
-
 type ErrorM m = ME.MonadError Error m
-
 
 data Error where
 
@@ -68,7 +57,8 @@ data Error where
                        }
                     -> Error
 
-  SignatureConflict :: { conflicting :: [AbsTranslation Type] }
+  SignatureConflict :: forall ret. Show ret
+                    => { conflicting :: [AbsTranslation ret] }
                     -> Error
 
   Cycle             :: { cyclicSigs :: [AbsTranslation UnknownType] }
@@ -88,6 +78,17 @@ data Error where
   Panic             :: { panicMessage :: String }
                     -> Error
 
+
+instance (Show path, Show ret) => Show (Scope path ret) where
+    show s =
+        printf "[%s] %s" (posStr :: String) (sigStr :: String)
+      where
+        sigStr = show $ s^.scopeTr.trSig
+
+        posStr = printf "\"%s\" l%d c%d"
+            (sourceName srcPos) (sourceLine srcPos) (sourceColumn srcPos)
+
+        srcPos = s^.scopeTr.trSourcePos
 
 
 instance Show Error where
@@ -161,6 +162,10 @@ signatureNotFound missingPath argTypes = do
 
 cycle :: ErrorM m => [AbsTranslation UnknownType] -> m a
 cycle = ME.throwError . Cycle
+
+
+conflict :: (ErrorM m, Show ret) => [AbsTranslation ret] -> m a
+conflict = ME.throwError . SignatureConflict
 
 
 panic :: (ErrorM m, Scoped path ret m, Show path, Show ret)

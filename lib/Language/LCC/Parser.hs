@@ -9,11 +9,15 @@ module Language.LCC.Parser
   ) where
 
 import Control.Applicative hiding ((<|>), many)
-import Control.Lens ((|>), (<|))
+import Control.Lens (traverse, _1, _2)
+import Control.Lens.Operators
 import Control.Monad
 import Control.Monad.Error
 
 import Data.Char
+import Data.Function (on)
+import Data.List (groupBy, sortBy)
+import Data.Maybe
 import Data.Monoid
 import qualified Data.Map as Map
 import qualified Data.Sequence as Seq
@@ -48,22 +52,39 @@ localeParser =
 
 nodeParser :: AbsolutePath -> Parser (PathNode, RawAST)
 nodeParser path = do
-    name <- Lex.identifier
+    name <- Lex.identifier <* Lex.colon
     (,) name <$> contentParser (path |> name)
   where
     contentParser :: AbsolutePath -> Parser RawAST
     contentParser path = Lex.braces (subtreeParser path)
-                     <|> Leaf <$> translationParser path
+                     <|> Leaf . (:[]) <$> translationParser path
                      <?> "translation definition or subgroup"
 
 
 subtreeParser :: AbsolutePath -> Parser RawAST
-subtreeParser path = Subtree . Map.fromList <$> many (nodeParser path)
+subtreeParser path = Subtree <$> (buildMap =<< many (nodeParser path))
                  <?> "list of translation definitions or subgroups"
+  where
+    buildMap :: [(PathNode, RawAST)] -> Parser (Map.Map PathNode RawAST)
+    buildMap = liftM Map.fromList
+             . (traverse._2 %%~ joinLeafs)
+             . map extractFst
+             . groupBy ((==)`on`fst)
+             . sortBy (compare`on`fst)
+
+    extractFst :: [(a,b)] -> (a,[b])
+    extractFst = (_1 %~ fromJust . getFirst)
+               . (traverse %%~ (_1 %~ First . Just))
+
+    joinLeafs :: [RawAST] -> Parser RawAST
+    joinLeafs ns@(Leaf _:nss) = return $ Leaf (concatMap (^?!_Leaf) ns)
+    joinLeafs [Subtree m]     = return (Subtree m)
+    joinLeafs nss             = fail $ "Found repeated subtrees: " ++ show nss
 
 translationParser :: AbsolutePath -> Parser RawTranslation
 translationParser path = do
-    params <- Lex.parens (Lex.commaSep1 paramParser) <* Lex.symbol "->"
+    params <- option [] $
+                Lex.parens (Lex.commaSep1 paramParser) <* Lex.symbol "->"
 
     let sig = Signature path params UnknownType
 

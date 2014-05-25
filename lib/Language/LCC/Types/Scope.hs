@@ -12,7 +12,6 @@ import Control.Applicative
 import Control.Lens
 
 import Control.Monad.Trans.Class
-import qualified Control.Monad.Trans.Either as E
 import qualified Control.Monad.Trans.Reader as R
 import qualified Control.Monad.Trans.Writer.Lazy as L
 import qualified Control.Monad.Trans.Writer.Strict as S
@@ -97,10 +96,6 @@ instance Monad m => Scoped path ret (ScopeT path ret m) where
 
 
 -- MTL Boilerplate instances
-
-instance Scoped path ret m => Scoped path ret (E.EitherT e m) where
-    getS   = lift getS
-    localS = E.mapEitherT . localS
 
 instance Scoped path ret m => Scoped path ret (R.ReaderT r m) where
     getS   = lift getS

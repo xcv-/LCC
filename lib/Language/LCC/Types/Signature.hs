@@ -61,6 +61,9 @@ data Signature path ret = Signature
 
 makeLenses ''Signature
 
+type RelSignature ret = Signature RelativePath ret
+type AbsSignature ret = Signature AbsolutePath ret
+
 
 instance (Show path, Show ret) => Show (Signature path ret) where
   show Signature {..} =
@@ -71,7 +74,7 @@ instance (Show path, Show ret) => Show (Signature path ret) where
 
 
 paramSig :: FromParamName path => Param -> Signature path Type
-paramSig Param {..} = Signature { _sigPath = mkParamName _paramName
+paramSig Param {..} = Signature { _sigPath = _ParamName # _paramName
                                 , _sigParams = []
                                 , _sigReturn = _paramType
                                 }

@@ -7,6 +7,8 @@ module Language.LCC.Analyzer where
 
 import Prelude hiding (mapM, mapM_, forM_, foldlM, foldrM, sequence)
 
+import Debug.Trace
+
 import Control.Applicative
 import Control.Arrow (first, second)
 import Control.Lens
@@ -28,7 +30,6 @@ import Language.LCC.Parser
 import Language.LCC.Target
 import Language.LCC.TypeChecker
 import qualified Language.LCC.Error as Err
-
 
 {-
 checkInterfaces :: [(Locale, LocaleState)]
@@ -53,11 +54,11 @@ checkInterface st1 st2 =
     -}
 
 
-compile :: (Applicative m, Err.ErrorM m, Target t)
+analyze :: (Applicative m, Err.ErrorM m, Target t)
         => t
         -> RawLocale
         -> m AnalyzedLocale
-compile target rawLocale = do
+analyze target rawLocale = do
     withAbsolutePaths <- toAbsolute rawLocale
 
     withBuiltins <- injectBuiltins target withAbsolutePaths
@@ -118,8 +119,8 @@ verifyNameLookup l = scopedMapM_ (mapM_ verifyPath . view trImpl)
     lookupPath path = do
         getS >>= \t -> return $
           case path of
-            (VAbsolutePath path) -> has (localeAST.atPath (path^.from absolute)) l
-            (VParamName name)    -> has _Just $ lookupParam t name
+            VAbsolutePath p -> has (localeAST.atPath (p^.from absolute)._Just) l
+            VParamName name -> has _Just $ lookupParam t name
 
 
 
@@ -141,7 +142,7 @@ inferReturnTypes l =
     iter :: Err.ErrorM m => InferIterData -> m InferIterData
     iter (known, unknown) = do
        (known', unknown') <- execStateT (revForM_ unknown inferPass)
-                                        (known, unknown)
+                                        (known, [])
 
        if Map.size known == Map.size known'
          then Err.cycle unknown'
@@ -153,6 +154,8 @@ inferReturnTypes l =
     inferPass t = do
         exprType <- exprType'
         retType <- t ./> exprType . view trImpl
+
+        traceM $ "inferPass " ++ show (t^.trSig.sigPath)
 
         modify $
           case retType of

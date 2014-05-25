@@ -1,10 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Language.LCC.Pretty where
 
-import Control.Lens ((^.))
+import Control.Lens ((^.), to)
 
 import Data.String
+import Data.Text.Lazy.Lens (packed)
 import qualified Data.Map as Map
+import qualified Data.Text.Lazy as T
 
 import Text.PrettyPrint.Leijen.Text
 import Text.Parsec.Pos
@@ -12,14 +14,8 @@ import Text.Parsec.Pos
 import Language.LCC.Types
 
 
-oshow :: (Show a, IsString s) => a -> s
-oshow = fromString . show
-
-otext :: IsString s => String -> Doc
-otext = text . fromString
-
 tshow :: Show a => a -> Doc
-tshow = text . oshow
+tshow = text . fromString . show
 
 
 instance Pretty RelativePath where
@@ -50,57 +46,71 @@ instance (Pretty path, Pretty ret) => Pretty (Signature path ret) where
            <+> params <+> text "->"
            <+> pretty (s^.sigReturn)
       where
-        params = encloseSep lbrace rbrace (text ", ") (map pretty $ s^.sigParams)
+        params = encloseSep lparen rparen (text ", ") (map pretty $ s^.sigParams)
 
 instance Pretty SourcePos where
-    pretty p = dquotes (otext $ sourceName p)
+    pretty p = dquotes (sourceName p^.packed.to text)
            <+> char 'l' <> int (sourceLine p)
            <+> char 'c' <> int (sourceColumn p)
 
 instance (Pretty path, Pretty ret) => Pretty (Translation path ret) where
-    pretty t = prettyParams <> pretty (t^.trImpl) <> linebreak <> comment
+    pretty t = nest 4 $ body <$> comment
       where
-        prettyParams =
+        body =
           case t^.trSig.sigParams of
-            [] -> empty
-            ps -> encloseSep lbrace rbrace (text ", ") (map pretty ps)
-                    <+> text "->" <> softbreak
+            [] -> nest 4 (pretty $ t^.trImpl)
+            ps -> encloseSep lparen rparen (text ", ") (map pretty ps)
+                    <+> (nest 4 $ text "->"
+                              </> pretty (t^.trImpl))
 
-        comment = char '#'
-              <+> pretty (t^.trSig)
-              <+> parens (pretty $ t^.trSourcePos)
+        comment = char '#' <+> pretty (t^.trSig)
+              <$> char '#' <+> parens (pretty $ t^.trSourcePos)
 
 
 
 instance Pretty path => Pretty (Expr path) where
-    pretty (IntL i)     = tshow i
-    pretty (DoubleL d)  = tshow d
-    pretty (BoolL b)    = text $ if b then "true" else "false"
-    pretty (CharL c)    = tshow c
-    pretty (StringL s)  = tshow s
-    pretty (Builtin t)  = char '<' <> pretty t <+> text "builtin>"
-    pretty (Array xs)   = list (map pretty xs)
+    pretty (IntL i)      = tshow i
+    pretty (DoubleL d)   = tshow d
+    pretty (BoolL b)     = text $ if b then "true" else "false"
+    pretty (CharL c)     = tshow c
+    pretty (StringL s)   = tshow s
+    pretty (Builtin sig) = text "<builtin" <+> pretty sig <> char '>'
+    pretty (Array xs)    = list (map pretty xs)
 
     pretty (SConcat ss) =
-        let prettyElem (StringL s) = otext . init . tail . show $ s
+        let prettyElem (StringL s) = text . T.pack . init . tail . show $ s
             prettyElem expr        = char '$' <> braces (pretty expr)
-        in hcat (map prettyElem ss)
+        in dquotes (hcat $ map prettyElem ss)
 
-    pretty (Funcall path args) = pretty path <> tupled (map pretty args)
+    pretty (Funcall path args) = pretty path <> if null args
+                                                  then empty
+                                                  else tupled (map pretty args)
 
     pretty (Cond c t f) = text "if" <+> pretty c
-                       <> softline <> text "then" <+> pretty t
-                       <> softline <> text "else" <+> pretty f
+                       <> softline <> align (text "then" <+> pretty t
+                       <> softline <>        text "else" <+> pretty f)
 
 
 
 instance (Pretty tag, Pretty a) => Pretty (TaggedTree tag a) where
     pretty (Leaf x)    = pretty x
-    pretty (Subtree m) = encloseSep (lbrace    <> line)
-                                    (linebreak <> rbrace)
-                                    (linebreak <> linebreak)
-                                    (map prettyElem $ Map.toList m)
+    pretty (Subtree m) = cat . punctuate linebreak
+                             . map prettyElem
+                             $ Map.toList m
 
       where
-        prettyElem :: (Pretty tag, Pretty a) => (tag, a) -> Doc
-        prettyElem (tag, a) = pretty tag <> char ':' <> softline <> pretty a
+        prettyElem :: (Pretty tag, Pretty a) => (tag, TaggedTree tag a) -> Doc
+        prettyElem (tag, a) = pretty tag <> char ':'
+                          <+> case a of
+                                Leaf _    -> pretty a
+                                Subtree _ -> nest 4 (lbrace
+                                                    <$> pretty a)
+                                         <$> rbrace
+
+
+
+instance (Pretty path, Pretty ret) => Pretty (Locale path ret) where
+    pretty l = text "locale " <> l^.localeName.packed.to text
+            <> line
+            <> line
+            <> pretty (l^.localeAST)
