@@ -7,8 +7,6 @@ module Language.LCC.Analyzer where
 
 import Prelude hiding (mapM, mapM_, forM_, foldlM, foldrM, sequence)
 
-import Debug.Trace
-
 import Control.Applicative
 import Control.Arrow (first, second)
 import Control.Lens
@@ -130,7 +128,6 @@ inferReturnTypes :: Err.ErrorM m => AbsLocale UnknownType -> m AnalyzedLocale
 inferReturnTypes l =
     findResult . iterate (>>=iter) . prepare $ l
   where
-
     prepare :: Monad m => AbsLocale UnknownType -> m InferIterData
     prepare l = return (Map.empty,  l^..localeAST.traverse)
 
@@ -155,15 +152,13 @@ inferReturnTypes l =
         exprType <- exprType'
         retType <- t ./> exprType . view trImpl
 
-        traceM $ "inferPass " ++ show (t^.trSig.sigPath)
-
         modify $
           case retType of
             Nothing -> second (t:)
 
             Just ret -> let setter = at (t^.trSig.sigPath)
                             newVal = t & trSig.sigReturn .~ ret
-                        in first (setter .~ Just newVal)
+                        in first (setter <>~ Just [newVal])
 
     revForM_ :: Monad m => [a] -> (a -> m b) -> m ()
     revForM_ xs f = foldrM (\x () -> f x >> return ()) () xs

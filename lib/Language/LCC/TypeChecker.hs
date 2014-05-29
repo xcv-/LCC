@@ -6,8 +6,6 @@ module Language.LCC.TypeChecker where
 
 import Prelude hiding (mapM, sequence, all)
 
-import Debug.Trace
-
 import Control.Applicative
 import Control.Lens
 import Control.Monad (join, when, liftM, liftM2, (>=>))
@@ -141,21 +139,16 @@ mkSigReturnGetter lookupPath path paramTypes =
     case path of
       VAbsolutePath path ->
         let translations = lookupPath (path^.from absolute)
-            matching     = filter (matchParams paramTypes) translations
-        in return $ matching ^? _Single.trSig.sigReturn
+            matching     = filter (\tr -> partMatchParams1 paramTypes
+                                                           (tr^..trParamTypes))
+                                  translations
+        in return $ matching^?_Single.trSig.sigReturn
 
       VParamName name ->
-        previewS $ trSig.sigParams.folded.filtered (matchParam name).paramType
+        previewS $ trSig.sigParams.folded.filtered (matchName name).paramType
   where
-    matchParam :: String -> Param -> Bool
-    matchParam name p = p^.paramName == name
-
-    matchParams :: [Maybe Type] -> Translation path Type -> Bool
-    matchParams pTypes tr =
-        let pTypes' = map _paramType $ tr^.trSig.sigParams
-            zipJust = map (_1 %~ fromJust) . filter (isJust.fst) . zip pTypes
-            eq      = uncurry (==)
-        in length pTypes == length pTypes' && all eq (zipJust pTypes')
+    matchName :: String -> Param -> Bool
+    matchName name p = p^.paramName == name
 
 
 maybeToThrow :: ExprTypeM ret m => SigReturnGetter m -> SigReturnGetter m

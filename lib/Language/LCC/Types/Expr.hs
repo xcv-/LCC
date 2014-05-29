@@ -29,6 +29,10 @@ data Expr path
     | Builtin (Signature AbsolutePath Type)
     deriving (Ord, Eq, Show)
 
+type RelExpr = Expr RelativeVarPath
+type AbsExpr = Expr AbsoluteVarPath
+type RawExpr = RelExpr
+
 
 instance Functor Expr where
     fmap f (IntL x)            = IntL x

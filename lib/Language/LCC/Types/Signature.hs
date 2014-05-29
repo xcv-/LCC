@@ -5,6 +5,7 @@ module Language.LCC.Types.Signature where
 import Control.Lens
 
 import Data.List
+import Data.Maybe
 
 import Language.LCC.Types.Path
 
@@ -78,3 +79,27 @@ paramSig Param {..} = Signature { _sigPath = _ParamName # _paramName
                                 , _sigParams = []
                                 , _sigReturn = _paramType
                                 }
+
+sigParamTypes :: Traversal' (Signature path ret) Type
+sigParamTypes = sigParams.traverse.paramType
+
+sigParamCount :: Getter (Signature path ret) Int
+sigParamCount = sigParams.to length
+
+
+matchSig :: Eq path => Signature path ret -> Signature path ret -> Bool
+matchSig s1 s2 = s1^.sigPath     == s2^.sigPath
+              && s1^.sigParamCount == s2^.sigParamCount
+              && s1^..sigParamTypes == s2^..sigParamTypes
+
+
+
+partMatchParams1 :: [Maybe Type] -> [Type] -> Bool
+partMatchParams1 ps1 ps2 = partMatchParams2 ps1 (map Just ps2)
+
+partMatchParams2 :: [Maybe Type] -> [Maybe Type] -> Bool
+partMatchParams2 ps1 ps2 = length ps1 == length ps2
+                       && and (zipWith match ps1 ps2)
+  where
+    match :: Maybe Type -> Maybe Type -> Bool
+    match p1 p2 = isNothing p1 || isNothing p2 || p1 == p2

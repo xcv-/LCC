@@ -25,6 +25,7 @@ library
                        Language.LCC.Types
   other-modules:       Language.LCC.Lexer
                        Language.LCC.Types.AST
+                       Language.LCC.Types.FlatAST
                        Language.LCC.Types.Expr
                        Language.LCC.Types.Path
                        Language.LCC.Types.Scope

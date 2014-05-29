@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Language.LCC.Types
   ( module Language.LCC.Types.AST
-  --, module Language.LCC.Types.Environment
+  , module Language.LCC.Types.FlatAST
   , module Language.LCC.Types.Expr
   , module Language.LCC.Types.Path
   , module Language.LCC.Types.Scope
@@ -21,7 +21,7 @@ module Language.LCC.Types
 import Control.Lens
 
 import Language.LCC.Types.AST
---import Language.LCC.Types.Environment
+import Language.LCC.Types.FlatAST
 import Language.LCC.Types.Expr
 import Language.LCC.Types.Path
 import Language.LCC.Types.Scope

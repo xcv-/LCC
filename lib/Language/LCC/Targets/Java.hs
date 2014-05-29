@@ -17,6 +17,8 @@ import Control.Monad (liftM, liftM2, liftM3)
 import Control.Monad.Reader (MonadReader, runReaderT, asks)
 import Control.Monad.Writer (MonadWriter, execWriterT, tell, censor)
 
+import Data.Functor
+import Data.List
 import Data.Maybe
 import Data.Monoid
 import Data.Text.Format
@@ -311,7 +313,7 @@ fmtExpr ast expr
                   in liftCM3 (format "({} ? {} : {})") (fmtExpr ast c)
                                                        (fmtExpr ast t)
                                                        (fmtExpr ast f)
-  | is _Builtin = Err.panic ("fmtExpr: Found builtin: " ++ show expr)
+  | is _Builtin = return $ format1 "<builtin: {}>" (show expr)
   where
     is :: Prism' AbsExpr a -> Bool
     is prism = has prism expr
@@ -346,9 +348,9 @@ writePreamble = do
 writeInterface :: (Err.ErrorM m, Writing m) => AbsAST Type -> m ()
 writeInterface ast =
     case ast of
-      Leaf tr ->
-        Err.globalPanic $ "writeInterface: Translation at the top level: "
-                            ++ show (tr^.trSig)
+      Leaf trs ->
+        Err.globalPanic $ "writeInterface: Translations at the top level: "
+                            ++ show (trs^..traverse.trSig)
       Subtree m ->
         mapWithTagsM_ m writeSignature writeNestedClass
   where
@@ -372,9 +374,9 @@ writeInterface ast =
 writeImplementation :: (Err.ErrorM m, Writing m) => AbsAST Type -> m ()
 writeImplementation ast =
     case ast of
-      Leaf tr ->
+      Leaf trs ->
         Err.globalPanic $ "writeImplementation: Translation at the top level: "
-                            ++ show (tr^.trSig)
+                            ++ show (trs^..traverse.trSig)
       Subtree m -> mapWithTagsM_ m writeMethod writeNestedClass
   where
     writeMethod :: (Err.ErrorM m, Writing m)
@@ -438,10 +440,25 @@ instance Target JavaTarget where
         fold builtins $ \path (builtinSig, _) -> do
           let builtin = builtinTranslation builtinSig
 
-          localeAST.atPath path %%~ maybe (return $ Just builtin)
-                                          (Err.conflict . (:[builtin]))
+          localeAST.atPath path %%~ \case
+            Just (Subtree _) ->
+              Err.globalPanic $
+                "Cannot insert builtin: subtree exists at the same path: "
+                  ++ show path
+
+            node ->
+              fmap Leaf <$> insertNotConflicting builtin (node^?_Just._Leaf)
       where
         fold m f = Map.foldrWithKey' (\p b l -> l >>= f p b) (return l) m
+
+        insertNotConflicting :: (Err.ErrorM m, Show ret)
+                             => AbsTranslation ret
+                             -> Maybe [AbsTranslation ret]
+                             -> m (Maybe [AbsTranslation ret])
+        insertNotConflicting builtin prevs =
+            case find (matchTrParams builtin) =<< prevs of
+              Nothing    -> return $ Just [builtin] <> prevs
+              Just confl -> Err.conflict [confl, builtin]
 
     output t ls = do
         lines <- flip runReaderT t . execWriterT $ writeLocales ls

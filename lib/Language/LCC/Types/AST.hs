@@ -11,9 +11,7 @@ import Control.Applicative
 import Control.Lens
 
 import Data.Foldable
-import Data.Function
 import Data.Functor
-import Data.List (partition, groupBy)
 import Data.Maybe
 import Data.Monoid
 import Data.Sequence (ViewL(..), ViewR(..))
@@ -32,21 +30,21 @@ import Language.LCC.Types.Signature
 
 data TaggedTree tag a
     = Subtree (Map.Map tag (TaggedTree tag a))
-    | Leaf [a]
+    | Leaf [a] -- required for overloading
     deriving (Eq, Show)
 
 makePrisms ''TaggedTree
 
 
-_Single :: Prism' [a] a
-_Single = prism (:[]) $ \case { [a] -> Right a; t -> Left t }
-
-{-# WARNING leaf "Not really an Iso" #-}
+{-# WARNING leaf "Not an Iso: Just (Subtree [])^.leaf.from leaf = Nothing" #-}
 leaf :: Iso' (Maybe (TaggedTree tag a)) [a]
 leaf = iso (^.._Just._Leaf.traverse) $ \case
                [] -> Nothing
                xs -> Just (Leaf xs)
 
+
+_Single :: Prism' [a] a
+_Single = prism (:[]) $ \case { [a] -> Right a; t -> Left t }
 
 _SingleLeaf :: Prism' (TaggedTree tag a) a
 _SingleLeaf = _Leaf._Single
@@ -92,62 +90,6 @@ emptyTree :: Ord tag => TaggedTree tag a
 emptyTree = Subtree Map.empty
 
 
-paths :: (Ord tag, Monoid s, Cons' s tag) => TaggedTree tag a -> [s]
-paths (Leaf _)    = []
-paths (Subtree m) = Map.foldrWithKey collect [] m
-  where
-    collect k (Leaf x) acc = replicate (length x) k : acc
-    collect k tree     acc = map (k <|) (paths tree) ++ acc
-
-    replicate :: (Monoid s, Cons' s a) => Int -> a -> s
-    replicate n k = foldl' (\acc _ -> k <| acc) mempty [1..n]
-
-
-flatten :: (Ord tag, Monoid s, Cons' s tag) => TaggedTree tag a -> [(s, a)]
-flatten tree = zip (paths tree) (toList tree)
-
-
-rebuild :: (Ord tag, Cons' s tag)
-        => [(s, a)]
-        -> TaggedTree tag a
-rebuild ns =
-    let (leafs, subtrees) = partition (isSingleElement . fst) ns
-                            & _1 %~ groupLeafs
-                            & _2 %~ subtreeMap
-    in Subtree $ Map.fromList (leafs <> subtrees)
-  where
-    groupLeafs :: (Eq tag, Cons' s tag) => [(s, a)] -> [(tag, TaggedTree tag a)]
-    groupLeafs = map (_2 %~ Leaf)
-               . map extractFst
-               . groupBy ((==) `on` fst)
-               . map (_1 %~ unsafeHead)
-
-    subtreeMap :: (Ord tag, Cons' s tag) => [(s, a)] -> [(tag, TaggedTree tag a)]
-    subtreeMap = map (_2 %~ rebuild)
-               . map extractHead
-               . groupBy ((==) `on` unsafeHead . fst)
-
-    extractFst :: [(tag, a)] -> (tag, [a])
-    extractFst lfs = lfs & traverse %%~ _1 %~ First . Just
-                         & _1 %~ fromJust . getFirst
-
-    extractHead :: Cons' s tag => [(s,a)] -> (tag, [(s, a)])
-    extractHead sts = sts & traverse._1 %%~ (_1 %~ First . Just) . unsafeUncons
-                          & _1 %~ fromJust . getFirst
-
-    isSingleElement :: Cons' s tag => s -> Bool
-    isSingleElement s = hasn't (_tail._head) s
-
-    unsafeUncons :: Cons' s a => s -> (a,s)
-    unsafeUncons s = s^?!_Cons
-
-    unsafeHead :: Cons' s a => s -> a
-    unsafeHead = fst . unsafeUncons
-
-    unsafeTail :: Cons' s a => s -> s
-    unsafeTail = snd . unsafeUncons
-
-
 
 mapWithTagsM_ :: (Monad m, Ord tag)
               => Map.Map tag (TaggedTree tag a)
@@ -175,24 +117,28 @@ data Translation path ret =
 makeLenses ''Translation
 
 
-type RelExpr = Expr RelativeVarPath
-type AbsExpr = Expr AbsoluteVarPath
 
 type RelTranslation ret = Translation RelativeVarPath ret
 type AbsTranslation ret = Translation AbsoluteVarPath ret
+type RawTranslation = RelTranslation UnknownType
+type AnalyzedTranslation = AbsTranslation Type
+
 
 type AST path ret = TaggedTree PathNode (Translation path ret)
+
 type RelAST ret = AST RelativeVarPath ret
 type AbsAST ret = AST AbsoluteVarPath ret
+type RawAST = RelAST UnknownType
+type AnalyzedAST = AbsAST Type
 
-type FlatAST path ret = [(AbsolutePath, Translation path ret)]
-type FlatRelAST ret = FlatAST RelativeVarPath ret
-type FlatAbsAST ret = FlatAST AbsoluteVarPath ret
 
-type FlatASTMap path ret = Map.Map AbsolutePath [Translation path ret]
-type FlatRelASTMap ret = FlatASTMap RelativeVarPath ret
-type FlatAbsASTMap ret = FlatASTMap AbsoluteVarPath ret
 
+trParamTypes :: Traversal' (Translation path ret) Type
+trParamTypes = trSig.sigParamTypes
+
+
+matchTrParams :: Eq path => Translation path ret -> Translation path ret -> Bool
+matchTrParams t1 t2 = matchSig (t1^.trSig) (t2^.trSig)
 
 
 atPath :: AbsolutePath -> Lens' (AST path ret) (Maybe (AST path ret))

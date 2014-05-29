@@ -31,10 +31,6 @@ import qualified Language.LCC.Error as Err
 import qualified Language.LCC.Lexer as Lex
 
 
-type RawTranslation = Translation RelativeVarPath UnknownType
-type RawAST = AST RelativeVarPath UnknownType
-type RawExpr = Expr RelativeVarPath
-
 
 parseLocale :: Err.ErrorM m => String -> Text.Text -> m RawLocale
 parseLocale filename fileContents =
@@ -68,13 +64,9 @@ subtreeParser path = Subtree <$> (buildMap =<< many (nodeParser path))
     buildMap :: [(PathNode, RawAST)] -> Parser (Map.Map PathNode RawAST)
     buildMap = liftM Map.fromList
              . (traverse._2 %%~ joinLeafs)
-             . map extractFst
+             . map unsafeExtractFst
              . groupBy ((==)`on`fst)
              . sortBy (compare`on`fst)
-
-    extractFst :: [(a,b)] -> (a,[b])
-    extractFst = (_1 %~ fromJust . getFirst)
-               . (traverse %%~ (_1 %~ First . Just))
 
     joinLeafs :: [RawAST] -> Parser RawAST
     joinLeafs ns@(Leaf _:nss) = return $ Leaf (concatMap (^?!_Leaf) ns)
