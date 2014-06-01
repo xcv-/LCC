@@ -8,7 +8,7 @@ import qualified Data.Text.Lazy as T
 import System.FilePath
 
 import qualified Language.LCC.Error as Err
-import Language.LCC.Types
+import Language.LCC.AST
 
 
 class Target t where

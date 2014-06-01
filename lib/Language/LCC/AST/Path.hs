@@ -5,7 +5,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE LambdaCase #-}
-module Language.LCC.Types.Path where
+module Language.LCC.AST.Path where
 
 import GHC.Exts (IsList(..))
 
@@ -90,9 +90,6 @@ absolute = iso (\(AbsolutePath path) -> path) AbsolutePath
 
 
 -- Prisms
-
-type Cons' s a = Cons s s a a
-
 
 instance Cons AbsolutePath AbsolutePath PathNode PathNode where
     _Cons = prism prepend $ \(AbsolutePath nns) -> case Seq.viewl nns of

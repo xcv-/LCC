@@ -23,7 +23,7 @@ import Data.Traversable
 import qualified Data.Map.Strict as Map
 import qualified Data.Sequence as Seq
 
-import Language.LCC.Types
+import Language.LCC.AST
 import Language.LCC.Parser
 import Language.LCC.Target
 import Language.LCC.TypeChecker
@@ -168,7 +168,7 @@ inferReturnTypes l =
                  , ScopedAbs UnknownType m
                  )
               => st (AbsExpr -> m (Maybe Type))
-    exprType' = liftM2 exprType  folder' getSigReturn'
+    exprType' = liftM2 exprType folder' getSigReturn'
 
     folder' :: ( MonadState InferIterData st
                , Err.ErrorM m

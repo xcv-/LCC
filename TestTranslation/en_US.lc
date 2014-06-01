@@ -16,7 +16,7 @@ myApplication: {
     # comparison operators coming soon
     ternaryOperator: (bool x) -> if @x then "x is true" else "x is false"
 
-    subGroupsCanBeNested: {
+    subGroupsCanBeNested[private]: {
         deeperTranslation: "More text"
 
         # ^ in a path goes up one level
@@ -32,7 +32,9 @@ myApplication: {
 
     test0: 0
     test1: 1
+
     returnFirst: (int x, int y) -> @x
+
     test2: 2
     test3: 3
 }

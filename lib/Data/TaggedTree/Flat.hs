@@ -1,4 +1,4 @@
-module Language.LCC.Types.FlatAST where
+module Data.TaggedTree.Flat where
 
 import Control.Lens
 
@@ -10,19 +10,7 @@ import Data.Monoid
 
 import qualified Data.Map.Strict as Map
 
-
-import Language.LCC.Types.AST
-import Language.LCC.Types.Path
-
-
-type FlatAST path ret = [(AbsolutePath, [Translation path ret])]
-type FlatRelAST ret = FlatAST RelativeVarPath ret
-type FlatAbsAST ret = FlatAST AbsoluteVarPath ret
-
-type FlatASTMap path ret = Map.Map AbsolutePath [Translation path ret]
-type FlatRelASTMap ret = FlatASTMap RelativeVarPath ret
-type FlatAbsASTMap ret = FlatASTMap AbsoluteVarPath ret
-
+import Data.TaggedTree
 
 
 paths :: (Ord tag, Monoid s, Cons' s tag) => TaggedTree tag a -> [s]

@@ -4,7 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Language.LCC.Types.Scope where
+module Language.LCC.AST.Scope where
 
 import Prelude hiding (mapM, mapM_)
 
@@ -29,8 +29,11 @@ import Data.Traversable
 import Text.Parsec.Pos
 import Text.Printf (printf)
 
-import Language.LCC.Types.AST
-import Language.LCC.Types.Path
+import Data.TaggedTree
+
+import Language.LCC.AST.AST
+import Language.LCC.AST.Path
+import Language.LCC.AST.Translation
 
 
 

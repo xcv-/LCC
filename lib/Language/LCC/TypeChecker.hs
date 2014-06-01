@@ -20,25 +20,64 @@ import Data.Traversable
 
 import Text.Printf (printf)
 
-import Language.LCC.Types
+import Language.LCC.AST
 import qualified Language.LCC.Error as Err
 
 
 typeOf :: (Err.ErrorM m, ScopedAbs ret m, Show ret)
-       => AbsExpr -> AbsAST Type -> m Type
-typeOf expr ast =
+       => AnalyzedAST
+       -> AbsExpr
+       -> m Type
+typeOf ast expr =
     exprType' expr >>= maybe err return
   where
     err = Err.panic ("typeOf: Could not resolve type of " ++ show expr)
 
-    exprType' = exprType fold getSigReturn
-    fold = foldInfer getSigReturn
+    exprType'    = exprType fold getSigReturn
+    fold         = foldInfer getSigReturn
     getSigReturn = maybeToThrow . mkSigReturnGetter . astLookup $ ast
+
+
+calleeSignature :: (Err.ErrorM m, ScopedAbs Type m)
+                => AnalyzedAST
+                -> AbsoluteVarPath
+                -> [AbsExpr]
+                -> m (Signature AbsoluteVarPath Type)
+calleeSignature ast f args = do
+    case f of
+      VParamName name -> do
+        param <- paramLookup name
+        case param of
+          Just p -> return (paramSig p)
+          Nothing -> Err.symbolNotFound f
+
+      VAbsolutePath p -> do
+        tr <- findFunction ast (p^.from absolute) args
+        return $ tr^.trSig & sigPath %~ view (absolute . re _Absolute)
+
+
+findFunction :: (Err.ErrorM m, ScopedAbs Type m)
+             => AnalyzedAST
+             -> AbsolutePath
+             -> [AbsExpr]
+             -> m AnalyzedTranslation
+findFunction ast f args = do
+    argTypes <- mapM (typeOf ast) args
+
+    let filterMatching = filter (\tr -> tr^..trParamTypes == argTypes)
+        singleMatch    = preview _Single . filterMatching
+
+    case singleMatch $ astLookup ast f of
+      Just tr -> return tr
+      Nothing -> Err.signatureNotFound (f^.absolute.re _Absolute) argTypes
+
 
 
 type ExprTypeM ret m = (Err.ErrorM m, ScopedAbs ret m, Show ret)
 
 type TypeFolder m = Maybe Type -> [AbsExpr] -> m (Maybe Type)
+
+type PathLookup path = AbsolutePath -> [Translation path Type]
 
 type SigReturnGetter m = AbsoluteVarPath -> [Maybe Type] -> m (Maybe Type)
 
@@ -48,39 +87,33 @@ exprType :: ExprTypeM ret m
          -> SigReturnGetter m
          -> AbsExpr
          -> m (Maybe Type)
-exprType fold getSigReturn expr = do
+exprType fold getSigReturn expr
+  | is _IntL    = return (Just TInt)
+  | is _DoubleL = return (Just TDouble)
+  | is _BoolL   = return (Just TBool)
+  | is _CharL   = return (Just TChar)
+  | is _StringL = return (Just TString)
+  | is _SConcat = do
+      fold (Just TString) (expr^?!_SConcat) >>= \case
+        (Just TString) -> return (Just TString)
+        (Just other)   -> Err.typeError TString other
+        Nothing        -> Err.panic "exprType: fold returned Nothing"
 
-  --this <- viewS (trSig.sigPath.to show)
+  | is _Array =
+      (liftM.fmap) TArray $ fold Nothing (expr^?!_Array)
 
-  --traceM $ this ++ "\t\t\t" ++ show expr
+  | is _Cond = do
+      let (condition, ifT, ifF) = expr^?!_Cond
+      fold (Just TBool) [condition]
+      fold Nothing [ifT, ifF]
 
-  case () of
-   ()| is _IntL    -> return (Just TInt)
-     | is _DoubleL -> return (Just TDouble)
-     | is _BoolL   -> return (Just TBool)
-     | is _CharL   -> return (Just TChar)
-     | is _StringL -> return (Just TString)
-     | is _SConcat -> do
-         fold (Just TString) (expr^?!_SConcat) >>= \case
-           (Just TString) -> return (Just TString)
-           (Just other)   -> Err.typeError TString other
-           Nothing        -> Err.panic "exprType: fold returned Nothing"
+  | is _Funcall = do
+      let (fnPath, args) = expr^?!_Funcall
+      argTypes <- mapM (exprType fold getSigReturn) args
 
-     | is _Array ->
-         (liftM.fmap) TArray $ fold Nothing (expr^?!_Array)
+      getSigReturn fnPath argTypes
 
-     | is _Cond -> do
-         let (condition, ifT, ifF) = expr^?!_Cond
-         fold (Just TBool) [condition]
-         fold Nothing [ifT, ifF]
-
-     | is _Funcall -> do
-         let (fnPath, args) = expr^?!_Funcall
-         argTypes <- mapM (exprType fold getSigReturn) args
-
-         getSigReturn fnPath argTypes
-
-     | is _Builtin -> return $ Just (expr^?!_Builtin.sigReturn)
+  | is _Builtin = return $ Just (expr^?!_Builtin.sigReturn)
   where
     is prism = has prism expr
 
@@ -125,30 +158,33 @@ foldCheck getSigReturn expected exprs =
 
 -- SigReturnGetters
 
-mapLookup :: FlatASTMap path Type -> AbsolutePath -> [Translation path Type]
+
+
+mapLookup :: FlatASTMap path Type -> PathLookup path
 mapLookup astMap path = astMap ^.. ix path.traverse
 
-astLookup :: AST path Type -> AbsolutePath -> [Translation path Type]
+astLookup :: AST path Type -> PathLookup path
 astLookup ast path = ast ^.. atPath path._Just._Leaf.traverse
 
+paramLookup :: Scoped path ret m => String -> m (Maybe Param)
+paramLookup name = previewS $ trSig.sigParams.folded.filtered (matchName name)
+  where
+    matchName :: String -> Param -> Bool
+    matchName name p = p^.paramName == name
 
-mkSigReturnGetter :: Scoped path ret m
-                  => (AbsolutePath -> [Translation path Type])
-                  -> SigReturnGetter m
+
+mkSigReturnGetter :: Scoped path ret m => PathLookup path -> SigReturnGetter m
 mkSigReturnGetter lookupPath path paramTypes =
     case path of
+      VParamName name ->
+        liftM (fmap $ view paramType) (paramLookup name)
+
       VAbsolutePath path ->
         let translations = lookupPath (path^.from absolute)
             matching     = filter (\tr -> partMatchParams1 paramTypes
                                                            (tr^..trParamTypes))
                                   translations
         in return $ matching^?_Single.trSig.sigReturn
-
-      VParamName name ->
-        previewS $ trSig.sigParams.folded.filtered (matchName name).paramType
-  where
-    matchName :: String -> Param -> Bool
-    matchName name p = p^.paramName == name
 
 
 maybeToThrow :: ExprTypeM ret m => SigReturnGetter m -> SigReturnGetter m

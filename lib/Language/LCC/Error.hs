@@ -16,7 +16,7 @@ import Data.List
 import Text.Parsec
 import Text.Printf (printf)
 
-import Language.LCC.Types
+import Language.LCC.AST
 
 
 newtype Scope path ret = Scope { _scopeTr :: Translation path ret }

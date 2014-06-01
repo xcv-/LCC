@@ -5,12 +5,12 @@ myApplication: {
     myTranslation1: "El texto traducido va aquí"
     myTranslation2: "Las traducciones están separadas por líneas"
 
-    myParameterizedTranslation: (bool x) -> "El valor de x es ${str(@x)}."
+    myParameterizedTranslation[private]: (bool x) -> "El valor de x es ${str(@x)}."
 
     ternaryOperator: (bool x) -> if @x then "x es verdadero" else "x es falso"
 
     subGroupsCanBeNested: {
-        deeperTranslation: "Más texto"
+        deeperTranslation[private]: "Más texto"
         referencingOthers: (int x) -> "Aquí llamo a otra traducción: ${^.^.myParameterizedTranslation(false)}"
     }
 
@@ -21,7 +21,7 @@ myApplication: {
 
     test0: 3
     test1: 4
-    returnFirst: (int x, int y) -> @x
-    test2: if false then ^.test1 else ^.returnFirst(^.test0, ^.test3)
-    test3: ^.test2
+    returnFirst[private]: (int x, int y) -> @x
+    test2[private]: if false then ^.test1 else ^.returnFirst(^.test0, ^.test3)
+    test3[private]: ^.test2
 }

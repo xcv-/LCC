@@ -3,6 +3,7 @@ module Language.LCC.Lexer
   , lexeme
   , symbol
   , reserved
+  , angles
   , parens
   , braces
   , brackets
@@ -39,7 +40,7 @@ lcKeywords, javaKeywords, cppKeywords :: [String]
 
 lcKeywords = ["locale", "int",    "double", "bool",
               "char",   "string", "true",   "false",
-              "if",     "then",   "else"]
+              "if",     "then",   "else",   "private"]
 
 javaKeywords = ["abstract", "continue",     "for",       "new",
                 "switch",   "assert",       "default",   "goto",
@@ -102,6 +103,7 @@ whiteSpace     = Tok.whiteSpace    lc
 lexeme         = Tok.lexeme        lc
 symbol         = Tok.symbol        lc
 reserved       = Tok.reserved      lc
+angles         = Tok.angles        lc
 parens         = Tok.parens        lc
 braces         = Tok.braces        lc
 brackets       = Tok.brackets      lc

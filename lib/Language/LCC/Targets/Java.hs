@@ -13,9 +13,11 @@ module Language.LCC.Targets.Java
 import GHC.Exts (IsList(..))
 
 import Control.Lens
-import Control.Monad (liftM, liftM2, liftM3)
+import Control.Monad (liftM, liftM2, liftM3, forM_)
 import Control.Monad.Reader (MonadReader, runReaderT, asks)
 import Control.Monad.Writer (MonadWriter, execWriterT, tell, censor)
+
+import Debug.Trace
 
 import Data.Functor
 import Data.List
@@ -26,6 +28,7 @@ import Data.Text.Lens
 import Data.Text.Buildable as Buildable
 import Data.Text.Format.Params
 
+import qualified Data.DList as DL
 import qualified Data.Map as Map
 import qualified Data.Sequence as Seq
 import qualified Data.Text.Lazy as T
@@ -35,8 +38,8 @@ import Text.Parsec.Pos
 
 import System.FilePath ((</>))
 
+import Language.LCC.AST
 import Language.LCC.Target
-import Language.LCC.Types
 import Language.LCC.TypeChecker
 import qualified Language.LCC.Error as Err
 
@@ -50,35 +53,25 @@ data JavaTarget = JavaTarget
     }
 
 
-newtype DiffList a = DiffList { getDiffList :: [a] -> [a] }
-
-instance Monoid (DiffList a) where
-    mempty = DiffList id
-    mappend f g = DiffList $ getDiffList f . getDiffList g
-
-
-dfmap :: (a -> a) -> DiffList a -> DiffList a
-dfmap f (DiffList g) = DiffList $ fmap f . g
-
-instance IsList (DiffList a) where
-    type Item (DiffList a) = a
-    fromList = DiffList . const
-    toList dl = getDiffList dl []
+instance IsList (DL.DList a) where
+    type Item (DL.DList a) = a
+    fromList = DL.fromList
+    toList = DL.toList
 
 
-type Writing m = (MonadWriter (DiffList T.Text) m, MonadReader JavaTarget m)
+type Writing m = (MonadWriter (DL.DList T.Text) m, MonadReader JavaTarget m)
 
 
 format1 :: Buildable b => Format -> b -> T.Text
 format1 fmt = format fmt . Only
 
-writeln :: MonadWriter (DiffList a) m => a -> m ()
+writeln :: MonadWriter (DL.DList a) m => a -> m ()
 writeln l = tell [l]
 
-writef1 :: (MonadWriter (DiffList T.Text) m, Buildable b) => Format -> b -> m ()
+writef1 :: (MonadWriter (DL.DList T.Text) m, Buildable b) => Format -> b -> m ()
 writef1 fmt = writeln . format1 fmt
 
-writefn :: (MonadWriter (DiffList T.Text) m, Params ps) => Format -> ps -> m ()
+writefn :: (MonadWriter (DL.DList T.Text) m, Params ps) => Format -> ps -> m ()
 writefn fmt = writeln . format fmt
 
 
@@ -86,7 +79,7 @@ writefn fmt = writeln . format fmt
 indent :: Writing m => m a -> m a
 indent m = do
     unit <- munit
-    flip censor m . dfmap $ \line ->
+    flip censor m . fmap $ \line ->
       if line == mempty
         then line
         else unit <> line
@@ -108,13 +101,14 @@ builtinParam pType = Param pType "<?>"
 
 builtinTranslation :: AbsSignature Type -> Translation path UnknownType
 builtinTranslation sig = Translation
-                           { _trSig       = sig & sigReturn .~ UnknownType
-                           , _trImpl      = Builtin sig
-                           , _trSourcePos = newPos "<builtin>" 0 0
+                           { _trSig         = sig & sigReturn .~ UnknownType
+                           , _trImpl        = Builtin sig
+                           , _trAnnotations = [PrivateBuiltin]
+                           , _trSourcePos   = newPos "<builtin>" 0 0
                            }
 
-builtins :: (Ord path1, FromAbsolute path1, FromAbsolute path2)
-         => Map.Map path1 (Signature path2 Type, T.Text)
+builtins :: FromAbsolute path
+         => Map.Map AnalyzedSignature (Signature path Type, T.Text)
 builtins = Map.fromList $ builtinMap
     [ (["str"], [TChar  ], TString, "Character.toString")
     , (["str"], [TString], TString, ""                  )
@@ -154,7 +148,7 @@ builtins = Map.fromList $ builtinMap
                             , _sigParams = map builtinParam paramTypes
                             , _sigReturn = ret
                             }
-        in (_Absolute # path, (sig, replacement))
+        in (sig & sigPath .~ _Absolute # path, (sig, replacement))
 
 
 writeBuiltinsClass :: Writing m => m ()
@@ -188,21 +182,21 @@ writeBuiltinsClass = writeClass
     ]
   where
     writeClass methods = do
-        writeln "public static class _Builtins {"
+        writeln "private static class _Builtins {"
 
         indent $ do
-            writeln $ "private static Map<String, Object> dynamics ="
+            writeln $ "private static Map<String, Object> dynamics = "
                    <> "new HashMap<String, Object>();"
 
             writeln ""
-            sequence_ methods
+            sequence_ $ intersperse (writeln "") methods
 
         writeln "}"
 
     method :: Writing m => T.Text -> T.Text -> [T.Text] -> T.Text -> m ()
     method ret name params expr = do
         let paramList = T.intercalate ", " params
-        writefn "public static {} {}({}) {" (ret, name, paramList)
+        writefn "private static {} {}({}) {" (ret, name, paramList)
         indent $ writef1 "return {};" expr
         writeln "}"
 
@@ -215,7 +209,7 @@ writeBuiltinsClass = writeClass
             "dynamics.get(name) instanceof " <> boxed ret
 
     addDynamic = do
-        writeln "public static void addDynamic(String name, Object value) {"
+        writeln "private static void addDynamic(String name, Object value) {"
         indent $ writeln "dynamics.put(name, value);"
         writeln "}"
 
@@ -286,15 +280,15 @@ fmtParam param = format "{} {}" ( param^.paramType.to javaType
                                 , param^.paramName)
 
 
-sigFmtArgs :: PathNode -> AbsSignature Type -> (T.Text, String, T.Text)
-sigFmtArgs name sig = (ret, name, argList)
+sigFmtArgs :: PathNode -> AnalyzedTranslation -> (T.Text, T.Text, String, T.Text)
+sigFmtArgs name t = (access, ret, name, argList)
   where
-    ret     = sig^.sigReturn.to javaType
-    argList = T.intercalate ", " $ map fmtParam (sig^.sigParams)
+    access  = if isPrivateTr t then "private" else "public"
+    ret     = t^.trSig.sigReturn.to javaType
+    argList = T.intercalate ", " $ map fmtParam (t^.trSig.sigParams)
 
 
-fmtExpr :: (Err.ErrorM m, ScopedAbs Type m)
-        => AbsAST Type -> AbsExpr -> m T.Text
+fmtExpr :: (Err.ErrorM m, ScopedAbs Type m) => AnalyzedAST -> AbsExpr -> m T.Text
 fmtExpr ast expr
   | is _IntL    = return $ expr^?!_IntL.to show.packed
   | is _DoubleL = return $ expr^?!_DoubleL.to show.packed
@@ -321,11 +315,11 @@ fmtExpr ast expr
     liftCM3 f x y z = liftM f $ liftM3 (,,) x y z
 
     fmtArray elems = do
-        TArray elemType <- typeOf (Array elems) ast
+        TArray elemType <- typeOf ast (Array elems)
         elemsFmt'd      <- mapM (fmtExpr ast) elems
 
-        return $ format "new {} { {} }" ( elemType^.to javaType
-                                        , T.intercalate ", " elemsFmt'd)
+        return $ format "new {}[] { {} }" ( elemType^.to javaType
+                                          , T.intercalate ", " elemsFmt'd)
 
     fmtFuncall path args = do
         relPath   <- liftM (removePrefix path) (viewS $ trSig.sigPath.absolute)
@@ -355,16 +349,14 @@ writeInterface ast =
         mapWithTagsM_ m writeSignature writeNestedClass
   where
     writeSignature :: Writing m
-                   => PathNode -> AbsTranslation Type -> m ()
-    writeSignature name Translation {..} = do
-        writef1 "// {}" name
-        writefn "public abstract {} {}({});" (sigFmtArgs name _trSig)
+                   => PathNode -> AnalyzedTranslation -> m ()
+    writeSignature name t = do
+        writefn "{} abstract {} {}({});" (sigFmtArgs name t)
         writeln ""
 
     writeNestedClass :: Writing m
                      => PathNode -> Map.Map PathNode (AbsAST Type) -> m ()
     writeNestedClass name m = do
-        writef1 "// {}" name
         writef1 "public abstract class _Abstract_{} {" name
         indent $ mapWithTagsM_ m writeSignature writeNestedClass
         writeln "}"
@@ -380,18 +372,17 @@ writeImplementation ast =
       Subtree m -> mapWithTagsM_ m writeMethod writeNestedClass
   where
     writeMethod :: (Err.ErrorM m, Writing m)
-                => PathNode -> AbsTranslation Type -> m ()
-    writeMethod name t@Translation {..} = do
-        writef1 "@Override // {}" name
-        writefn "public final {} {}({}) {" (sigFmtArgs name _trSig)
-        indent $ writef1 "return {};" =<< (t /> fmtExpr ast _trImpl)
+                => PathNode -> AnalyzedTranslation -> m ()
+    writeMethod name t = do
+        writeln "@Override"
+        writefn "{} final {} {}({}) {" (sigFmtArgs name t)
+        indent $ writef1 "return {};" =<< (t ./> fmtExpr ast . view trImpl)
         writeln "}"
         writeln ""
 
     writeNestedClass :: (Err.ErrorM m, Writing m)
                      => PathNode -> Map.Map PathNode (AbsAST Type) -> m ()
     writeNestedClass name m = do
-        writefn "// {}" name
         writefn "public final class _Impl_{} extends _Abstract_{} {" (name,name)
         indent $ mapWithTagsM_ m writeMethod writeNestedClass
         writeln "}"
@@ -410,7 +401,7 @@ writeInstantiation l = do
 
 writeLocalesArray :: Writing m => [AnalyzedLocale] -> m ()
 writeLocalesArray ls = do
-    let strings = map (format "\"{}\"" . view localeName) $ ls
+    let strings = map (format1 "\"{}\"" . view localeName) $ ls
 
     writef1 "public final {} _locales[] = {" =<< asks javaInterfaceName
     indent $ writeln $ T.intercalate ", " strings
@@ -426,44 +417,49 @@ writeLocales ls = do
 
     indent $ do
       writeInterface (head ls^.localeAST)
+      writeln ""
 
-      mapM_ writeInstantiation ls
+      forM_ ls $ \l -> do
+        writeInstantiation l
+        writeln ""
 
       writeLocalesArray ls
+      writeln ""
       writeBuiltinsClass
 
     writeln "}"
 
 
 instance Target JavaTarget where
-    injectBuiltins t l =
-        fold builtins $ \path (builtinSig, _) -> do
+    injectBuiltins t l = do
+        fold builtins $ \sig (builtinSig, _) -> do
           let builtin = builtinTranslation builtinSig
 
-          localeAST.atPath path %%~ \case
+          localeAST.atPath (sig^.sigPath) %%~ \case
             Just (Subtree _) ->
               Err.globalPanic $
                 "Cannot insert builtin: subtree exists at the same path: "
-                  ++ show path
+                  ++ show (sig^.sigPath)
 
             node ->
-              fmap Leaf <$> insertNotConflicting builtin (node^?_Just._Leaf)
+              Just . Leaf <$> insertNotConflicting builtin (node^?_Just._Leaf)
       where
         fold m f = Map.foldrWithKey' (\p b l -> l >>= f p b) (return l) m
 
         insertNotConflicting :: (Err.ErrorM m, Show ret)
                              => AbsTranslation ret
                              -> Maybe [AbsTranslation ret]
-                             -> m (Maybe [AbsTranslation ret])
+                             -> m [AbsTranslation ret]
         insertNotConflicting builtin prevs =
             case find (matchTrParams builtin) =<< prevs of
-              Nothing    -> return $ Just [builtin] <> prevs
+              Nothing    -> return $ builtin : concat (maybeToList prevs)
               Just confl -> Err.conflict [confl, builtin]
 
     output t ls = do
         lines <- flip runReaderT t . execWriterT $ writeLocales ls
-        let builder = foldr mappend "" . map TB.fromLazyText $ toList lines
-        let content = TB.toLazyText builder
+
+        let builders = map TB.fromLazyText . intersperse "\n" $ toList lines
+            content  = TB.toLazyText (mconcat builders)
 
         return [(file, content)]
       where

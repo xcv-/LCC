@@ -1,7 +1,10 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 module Language.LCC.Simplifier.Inline where
+
+import Debug.Trace
 
 import Control.Applicative
 import Control.Lens
@@ -9,22 +12,28 @@ import Control.Monad (liftM, liftM2, liftM3)
 import Control.Monad.Trans (lift)
 import Control.Monad.Reader (MonadReader, ReaderT, runReaderT, asks, local)
 
+import Data.Functor.Reverse
+import Data.List (find)
+import Data.Maybe
 import qualified Data.Map as Map
 
-import Language.LCC.Types
+import Language.LCC.AST
+import Language.LCC.Pretty
 import Language.LCC.TypeChecker
 import qualified Language.LCC.Error as Err
 
 
 
-type CallStack = (AbsAST Type, [CallStackFrame])
+type CallStack = (AnalyzedAST, [CallStackFrame], Int)
 type CallStackFrame = (AbsolutePath, [BoundParam])
 type BoundParam = (Param, AbsExpr)
 
 
 
-inline :: (Functor m, Err.ErrorM m) => AbsAST Type -> m (AbsAST Type)
-inline ast = flip runReaderT (ast, []) $ scopedMapM (trImpl %%~ inlineExpr) ast
+inline :: (Functor m, Err.ErrorM m) => Int -> AnalyzedAST -> m AnalyzedAST
+inline maxStackDepth ast =
+    flip runReaderT (ast, [], maxStackDepth) $
+      scopedMapM (trImpl inlineExpr) ast
 
 
 inlineExpr :: (Err.ErrorM m, ScopedAbs Type m, MonadReader CallStack m)
@@ -33,66 +42,65 @@ inlineExpr :: (Err.ErrorM m, ScopedAbs Type m, MonadReader CallStack m)
 inlineExpr expr
   | is _Array   = liftM Array   $ mapM inlineExpr (expr^?!_Array)
   | is _SConcat = liftM SConcat $ mapM inlineExpr (expr^?!_SConcat)
-  | is _Funcall = inlineFuncall expr (expr^?!_Funcall)
-  | is _Cond    = let (c,t,f) = expr^?!_Cond
-                  in liftM3 Cond (inlineExpr c) (inlineExpr t) (inlineExpr f)
+  | is _Cond    = do
+      let (c,t,f) = over each inlineExpr (expr^?!_Cond)
+
+      c >>= \case
+        BoolL b -> if b then t else f
+        _       -> liftM3 Cond c t f
+
+  | is _Funcall =
+      case (expr^?!_Funcall) of
+        (VAbsolutePath p, args) -> inlineFuncall (p^.from absolute) args
+        (VParamName name, args) -> liftM (fromMaybe expr) (findBoundParam name)
+
   | otherwise   = return expr
   where
     is prism = has prism expr
 
 
+findBoundParam :: MonadReader CallStack m => String -> m (Maybe AbsExpr)
+findBoundParam name = do
+    boundParams <- asks (^.._2 . to Reverse . traverse . _2 . traverse)
+
+    return . fmap snd $ find (paramNameEq name . fst) boundParams
+
+
 inlineFuncall :: (Err.ErrorM m, ScopedAbs Type m, MonadReader CallStack m)
-              => AbsExpr
-              -> (AbsoluteVarPath, [AbsExpr])
+              => AbsolutePath
+              -> [AbsExpr]
               -> m AbsExpr
-inlineFuncall expr (f,args) =
-    case f of
-      VParamName _paramName -> do
-        _paramType <- getAST >>= typeOf expr
-        boundParams <- getBoundParams
+inlineFuncall f args = do
+    let vf   = f^.absolute.re _Absolute
 
-        getBoundParam boundParams Param {..}
+    ast <- getAST
+    tr  <- findFunction ast f args
 
-      VAbsolutePath p -> do
-        ast <- getAST
+    if has (trImpl._Builtin) tr
+      then return (Funcall vf args)
+      else do
+        inlinedArgs <- mapM inlineExpr args
+        availStack <- getAvailStack
 
-        case findTrans ast (p^.from absolute) of
-          Nothing -> Err.symbolNotFound f
-
-          Just tr
-            | has (trImpl._Builtin) tr -> return expr
-            | otherwise -> do
-                inlinedArgs <- mapM inlineExpr args
-                extendStack (bindParams tr inlinedArgs)
-                            (tr ./> inlineExpr . view trImpl)
+        if availStack == 0
+          then return (Funcall vf inlinedArgs)
+          else extendStack (bindParams tr inlinedArgs)
+                           (tr ./> inlineExpr . view trImpl)
 
 
-
-getBoundParams :: MonadReader CallStack m => m [BoundParam]
-getBoundParams = asks (concat . map snd . snd)
-
-getBoundParam :: (Err.ErrorM m, ScopedAbs Type m)
-              => [BoundParam]
-              -> Param
-              -> m AbsExpr
-getBoundParam boundParams param = do
-    case lookup param boundParams of
-      Just expr ->
-        return expr
-      Nothing ->
-        Err.signatureNotFound (VParamName $ param^.paramName) []
 
 
 extendStack :: MonadReader CallStack m => CallStackFrame -> m a -> m a
-extendStack frame = local $ _2 %~ (frame:)
+extendStack frame = local $ over _2 (frame:)
+                          . over _3 (subtract 1)
 
 bindParams :: AbsTranslation Type -> [AbsExpr] -> CallStackFrame
 bindParams tr args = let sig = tr^.trSig
                      in (sig^.sigPath, zip (sig^.sigParams) args)
 
 
-findTrans :: AST path ret -> AbsolutePath -> Maybe (Translation path ret)
-findTrans ast path = ast ^? atPath path
+getAST :: MonadReader CallStack m => m AnalyzedAST
+getAST = view _1
 
-getAST :: MonadReader CallStack m => m (AbsAST Type)
-getAST = asks fst
+getAvailStack :: MonadReader CallStack m => m Int
+getAvailStack = view _3

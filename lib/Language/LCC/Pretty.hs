@@ -3,6 +3,7 @@ module Language.LCC.Pretty where
 
 import Control.Lens ((^.), to)
 
+import Data.Monoid (mconcat)
 import Data.String
 import Data.Text.Lazy.Lens (packed)
 import qualified Data.Map as Map
@@ -11,7 +12,7 @@ import qualified Data.Text.Lazy as T
 import Text.PrettyPrint.Leijen.Text
 import Text.Parsec.Pos
 
-import Language.LCC.Types
+import Language.LCC.AST
 
 
 tshow :: Show a => a -> Doc
@@ -93,20 +94,23 @@ instance Pretty path => Pretty (Expr path) where
 
 
 instance (Pretty tag, Pretty a) => Pretty (TaggedTree tag a) where
-    pretty (Leaf x)    = pretty x
+    pretty (Leaf xs)   = mconcat $ map pretty xs
     pretty (Subtree m) = cat . punctuate linebreak
                              . map prettyElem
+                             . concatMap splitLeafs
                              $ Map.toList m
 
       where
+        splitLeafs :: (tag, TaggedTree tag a) -> [(tag, TaggedTree tag a)]
+        splitLeafs (tag, Leaf xs) = map (\x -> (tag, Leaf [x])) xs
+        splitLeafs tup = [tup]
+
         prettyElem :: (Pretty tag, Pretty a) => (tag, TaggedTree tag a) -> Doc
         prettyElem (tag, a) = pretty tag <> char ':'
                           <+> case a of
-                                Leaf _    -> pretty a
-                                Subtree _ -> nest 4 (lbrace
-                                                    <$> pretty a)
-                                         <$> rbrace
-
+                                Leaf [x]  -> pretty x
+                                Subtree _ -> nest 4 (lbrace <$> pretty a)
+                                                            <$> rbrace
 
 
 instance (Pretty path, Pretty ret) => Pretty (Locale path ret) where

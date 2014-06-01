@@ -1,19 +1,18 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Language.LCC.Types.Signature where
+module Language.LCC.AST.Signature where
 
 import Control.Lens
 
 import Data.List
 import Data.Maybe
 
-import Language.LCC.Types.Path
+import Language.LCC.AST.Path
 
 
 
 data UnknownType = UnknownType
     deriving (Eq, Ord)
-
 
 instance Show UnknownType where
   show UnknownType = "<?>"
@@ -62,8 +61,11 @@ data Signature path ret = Signature
 
 makeLenses ''Signature
 
-type RelSignature ret = Signature RelativePath ret
-type AbsSignature ret = Signature AbsolutePath ret
+type RelSignature ret  = Signature RelativePath ret
+type AbsSignature ret  = Signature AbsolutePath ret
+
+type RawSignature      = Signature RelativePath UnknownType
+type AnalyzedSignature = Signature AbsolutePath Type
 
 
 instance (Show path, Show ret) => Show (Signature path ret) where
@@ -72,6 +74,9 @@ instance (Show path, Show ret) => Show (Signature path ret) where
     where
       paramList = intercalate ", " $ map show _sigParams
 
+
+paramNameEq :: String -> Param -> Bool
+paramNameEq name param = param^.paramName == name
 
 
 paramSig :: FromParamName path => Param -> Signature path Type

@@ -16,7 +16,7 @@ import Control.Monad.Error
 
 import Data.Char
 import Data.Function (on)
-import Data.List (groupBy, sortBy)
+import Data.List (nub, groupBy, sortBy)
 import Data.Maybe
 import Data.Monoid
 import qualified Data.Map as Map
@@ -26,7 +26,7 @@ import qualified Data.Text as Text
 import Text.Parsec
 import Text.Parsec.Text
 
-import Language.LCC.Types
+import Language.LCC.AST
 import qualified Language.LCC.Error as Err
 import qualified Language.LCC.Lexer as Lex
 
@@ -42,24 +42,29 @@ localeParser :: Parser RawLocale
 localeParser =
     Lex.whiteSpace *>
       (Locale <$> (Lex.reserved "locale" *> Lex.identifier)
-              <*> (Lex.colon *> subtreeParser mempty))
+              <*> (Lex.colon *> subtreeParser mempty []))
         <* eof
 
 
-nodeParser :: AbsolutePath -> Parser (PathNode, RawAST)
-nodeParser path = do
-    name <- Lex.identifier <* Lex.colon
-    (,) name <$> contentParser (path |> name)
+nodeParser :: AbsolutePath -> [Annotation] -> Parser (PathNode, RawAST)
+nodeParser path anns = do
+    name <- Lex.identifier
+    anns' <- annotationsParser anns
+    Lex.colon
+    content <- contentParser (path |> name) anns'
+
+    return (name, content)
   where
-    contentParser :: AbsolutePath -> Parser RawAST
-    contentParser path = Lex.braces (subtreeParser path)
-                     <|> Leaf . (:[]) <$> translationParser path
-                     <?> "translation definition or subgroup"
+    contentParser :: AbsolutePath -> [Annotation] -> Parser RawAST
+    contentParser path anns = Lex.braces (subtreeParser path anns)
+                          <|> Leaf . (:[]) <$> translationParser path anns
+                          <?> "translation definition or subgroup"
 
 
-subtreeParser :: AbsolutePath -> Parser RawAST
-subtreeParser path = Subtree <$> (buildMap =<< many (nodeParser path))
-                 <?> "list of translation definitions or subgroups"
+subtreeParser :: AbsolutePath -> [Annotation] -> Parser RawAST
+subtreeParser path anns =
+    Subtree <$> (buildMap =<< many (nodeParser path anns))
+            <?> "list of translation definitions or subgroups"
   where
     buildMap :: [(PathNode, RawAST)] -> Parser (Map.Map PathNode RawAST)
     buildMap = liftM Map.fromList
@@ -69,18 +74,35 @@ subtreeParser path = Subtree <$> (buildMap =<< many (nodeParser path))
              . sortBy (compare`on`fst)
 
     joinLeafs :: [RawAST] -> Parser RawAST
-    joinLeafs ns@(Leaf _:nss) = return $ Leaf (concatMap (^?!_Leaf) ns)
-    joinLeafs [Subtree m]     = return (Subtree m)
-    joinLeafs nss             = fail $ "Found repeated subtrees: " ++ show nss
+    joinLeafs nss =
+        case nss of
+          Leaf _:_    -> Leaf   <$> mapM toLeaf nss
+          [Subtree m] -> return  $  Subtree m
+          _           -> fail    $  "Found repeated subtrees: " ++ show nss
 
-translationParser :: AbsolutePath -> Parser RawTranslation
-translationParser path = do
+    toLeaf :: RawAST -> Parser RawTranslation
+    toLeaf (Leaf [x]) = return x
+    toLeaf (Leaf xs)  = fail $ "Expected single leaf, found " ++ show xs
+    toLeaf subtree    = fail $ "Expected leaf found subtree: " ++ show subtree
+
+
+annotationsParser :: [Annotation] -> Parser [Annotation]
+annotationsParser anns = do
+    anns' <- option [] $ Lex.brackets (Lex.commaSep annotationParser)
+
+    return $ nub (anns ++ anns')
+  where
+    annotationParser = Private <$ Lex.reserved "private"
+                   <?> "annotation"
+
+translationParser :: AbsolutePath -> [Annotation] -> Parser RawTranslation
+translationParser path anns = do
     params <- option [] $
                 Lex.parens (Lex.commaSep1 paramParser) <* Lex.symbol "->"
 
     let sig = Signature path params UnknownType
 
-    Translation sig <$> exprParser <*> getPosition
+    Translation sig <$> exprParser <*> pure anns <*> getPosition
 
 
 paramParser :: Parser Param

@@ -6,6 +6,7 @@ import Control.Applicative
 import Control.Monad
 
 import Data.Functor
+import Data.List (foldl1')
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -19,13 +20,14 @@ import System.Environment
 import System.Exit
 import System.FilePath
 
-import Language.LCC.Types
-
+import Language.LCC.AST
 import Language.LCC.Analyzer
 import Language.LCC.Parser
 import Language.LCC.Pretty
 import Language.LCC.Target
 import Language.LCC.Targets.Java
+import Language.LCC.Simplifier.Inline
+import Language.LCC.Simplifier.RemoveUnused
 import qualified Language.LCC.Error as Err
 
 
@@ -190,10 +192,18 @@ processLocales :: (Applicative m, Err.ErrorM m, Target t)
                -> [(FilePath, T.Text)]
                -> m [(FilePath, TL.Text)]
 processLocales target files = do
-    parsed   <- mapM (uncurry parseLocale) files
-    analyzed <- mapM (analyze target) parsed
+    parsed     <- mapM (uncurry parseLocale) files
+    analyzed   <- mapM (analyze target) parsed
 
-    output target analyzed
+    let simplify = foldl1' (>=>)
+                 [ return
+                 , localeAST (inline 20)
+                 , localeAST removeUnused
+                 ]
+
+    simplified <- mapM simplify analyzed
+
+    output target simplified
 
 
 

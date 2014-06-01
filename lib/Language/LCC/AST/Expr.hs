@@ -1,5 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
-module Language.LCC.Types.Expr where
+module Language.LCC.AST.Expr where
 
 import Control.Applicative
 import Control.Lens
@@ -9,8 +9,9 @@ import Data.Functor
 import Data.Monoid
 import Data.Traversable
 
-import Language.LCC.Types.Path
-import Language.LCC.Types.Signature
+import Language.LCC.AST.Path
+import Language.LCC.AST.Signature
+
 
 
 data Expr path
@@ -27,7 +28,9 @@ data Expr path
     | Cond    (Expr path) (Expr path) (Expr path)
 
     | Builtin (Signature AbsolutePath Type)
-    deriving (Ord, Eq, Show)
+    deriving (Eq, Ord, Show)
+
+makePrisms ''Expr
 
 type RelExpr = Expr RelativeVarPath
 type AbsExpr = Expr AbsoluteVarPath
@@ -74,7 +77,3 @@ instance Traversable Expr where
     traverse f (Cond cond ifT ifF) = Cond <$> traverse f cond
                                           <*> traverse f ifT
                                           <*> traverse f ifF
-
-
-
-makePrisms ''Expr
