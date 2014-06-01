@@ -325,7 +325,7 @@ fmtExpr ast expr
         relPath   <- liftM (removePrefix path) (viewS $ trSig.sigPath.absolute)
         argsFmt'd <- mapM (fmtExpr ast) args
 
-        return $ format "{}({})" ( show relPath
+        return $ format "{}({})" ( show (relPath^.from absolute)
                                  , T.intercalate ", " argsFmt'd)
 
 
