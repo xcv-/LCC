@@ -72,7 +72,7 @@ unsafeExtractHead sts = sts & traverse._1 %%~ (_1 %~ First . Just) . unsafeUncon
                       & _1 %~ fromJust . getFirst
 
 isSingleElement :: Cons' s tag => s -> Bool
-isSingleElement s = hasn't (_tail._head) s
+isSingleElement = hasn't (_tail._head)
 
 
 unsafeUncons :: Cons' s a => s -> (a,s)

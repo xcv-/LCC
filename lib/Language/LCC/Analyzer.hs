@@ -114,7 +114,7 @@ verifyNameLookup l = scopedMapM_ (mapM_ verifyPath . view trImpl)
                (Err.symbolNotFound path)
 
     lookupPath :: ScopedAbs ret m => AbsoluteVarPath -> m Bool
-    lookupPath path = do
+    lookupPath path =
         getS >>= \t -> return $
           case path of
             VAbsolutePath p -> has (localeAST.atPath (p^.from absolute)._Just) l

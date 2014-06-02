@@ -2,7 +2,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedLists #-}
@@ -401,7 +400,7 @@ writeInstantiation l = do
 
 writeLocalesArray :: Writing m => [AnalyzedLocale] -> m ()
 writeLocalesArray ls = do
-    let strings = map (format1 "\"{}\"" . view localeName) $ ls
+    let strings = map (format1 "\"{}\"" . view localeName) ls
 
     writef1 "public final {} _locales[] = {" =<< asks javaInterfaceName
     indent $ writeln $ T.intercalate ", " strings
@@ -431,7 +430,7 @@ writeLocales ls = do
 
 
 instance Target JavaTarget where
-    injectBuiltins t l = do
+    injectBuiltins t l =
         fold builtins $ \sig (builtinSig, _) -> do
           let builtin = builtinTranslation builtinSig
 

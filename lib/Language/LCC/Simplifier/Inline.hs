@@ -1,5 +1,4 @@
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 module Language.LCC.Simplifier.Inline where
@@ -50,7 +49,7 @@ inlineExpr expr
         _       -> liftM3 Cond c t f
 
   | is _Funcall =
-      case (expr^?!_Funcall) of
+      case expr^?!_Funcall of
         (VAbsolutePath p, args) -> inlineFuncall (p^.from absolute) args
         (VParamName name, args) -> liftM (fromMaybe expr) (findBoundParam name)
 

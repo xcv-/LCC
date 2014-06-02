@@ -61,8 +61,7 @@ instance (Pretty path, Pretty ret) => Pretty (Translation path ret) where
           case t^.trSig.sigParams of
             [] -> nest 4 (pretty $ t^.trImpl)
             ps -> encloseSep lparen rparen (text ", ") (map pretty ps)
-                    <+> (nest 4 $ text "->"
-                              </> pretty (t^.trImpl))
+                    <+> nest 4 (text "->" </> pretty (t^.trImpl))
 
         comment = char '#' <+> pretty (t^.trSig)
               <$> char '#' <+> parens (pretty $ t^.trSourcePos)

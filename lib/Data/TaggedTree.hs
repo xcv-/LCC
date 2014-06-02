@@ -114,8 +114,7 @@ atPath :: (IsList path, (Item path) ~ tag, Ord tag)
        -> Lens' (TaggedTree tag a) (Maybe (TaggedTree tag a))
 atPath path =
     case uncons (toList path) of
-      Nothing -> lens (const Nothing) const
-
+      Nothing     -> lens (const Nothing) const
       Just (n,ns) -> foldl' (\acc node -> acc.non' _Empty.at node) (at n) ns
   where
     _Empty = prism' (const emptyTree) $ \case

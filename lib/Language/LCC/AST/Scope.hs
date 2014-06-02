@@ -3,7 +3,6 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE TemplateHaskell #-}
 module Language.LCC.AST.Scope where
 
 import Prelude hiding (mapM, mapM_)
@@ -93,7 +92,7 @@ instance MonadTrans (ScopeT path ret) where
     lift m = ScopeT (const m)
 
 instance Monad m => Scoped path ret (ScopeT path ret m) where
-    getS       = ScopeT $ return
+    getS       = ScopeT return
     localS f m = ScopeT $ \t -> runScopeT (f t) m
 
 

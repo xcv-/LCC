@@ -43,7 +43,7 @@ calleeSignature :: (Err.ErrorM m, ScopedAbs Type m)
                 -> AbsoluteVarPath
                 -> [AbsExpr]
                 -> m (Signature AbsoluteVarPath Type)
-calleeSignature ast f args = do
+calleeSignature ast f args =
     case f of
       VParamName name -> do
         param <- paramLookup name
@@ -93,7 +93,7 @@ exprType fold getSigReturn expr
   | is _BoolL   = return (Just TBool)
   | is _CharL   = return (Just TChar)
   | is _StringL = return (Just TString)
-  | is _SConcat = do
+  | is _SConcat =
       fold (Just TString) (expr^?!_SConcat) >>= \case
         (Just TString) -> return (Just TString)
         (Just other)   -> Err.typeError TString other
