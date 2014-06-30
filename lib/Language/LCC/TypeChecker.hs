@@ -9,7 +9,7 @@ import Prelude hiding (mapM, sequence, all)
 import Control.Applicative
 import Control.Lens
 import Control.Monad (join, when, liftM, liftM2, (>=>))
-import Control.Monad.Error (throwError, catchError)
+import Control.Monad.Except (throwError, catchError)
 import Control.Monad.Reader (ask)
 
 import Data.Foldable

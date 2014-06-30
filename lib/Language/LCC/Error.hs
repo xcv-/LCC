@@ -7,7 +7,7 @@
 module Language.LCC.Error where
 
 import Control.Lens
-import qualified Control.Monad.Error as ME
+import qualified Control.Monad.Except as ME
 import Control.Monad.Reader
 
 import Data.Functor

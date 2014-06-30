@@ -12,7 +12,7 @@ import Control.Applicative hiding ((<|>), many)
 import Control.Lens (traverse, _1, _2)
 import Control.Lens.Operators
 import Control.Monad
-import Control.Monad.Error
+import Control.Monad.Except
 
 import Data.Char
 import Data.Function (on)
