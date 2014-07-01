@@ -79,7 +79,9 @@ type TypeFolder m = Maybe Type -> [AbsExpr] -> m (Maybe Type)
 
 type PathLookup path = AbsolutePath -> [Translation path Type]
 
-type SigReturnGetter m = AbsoluteVarPath -> [Maybe Type] -> m (Maybe Type)
+type SigReturnGetter m = AbsoluteVarPath
+                       -> [Maybe Type]
+                       -> m (Either [AnalyzedTranslation] Type)
 
 
 exprType :: ExprTypeM ret m
@@ -88,6 +90,7 @@ exprType :: ExprTypeM ret m
          -> AbsExpr
          -> m (Maybe Type)
 exprType fold getSigReturn expr
+  -- | trace ("exprType " ++ show expr) False = undefined
   | is _IntL    = return (Just TInt)
   | is _DoubleL = return (Just TDouble)
   | is _BoolL   = return (Just TBool)
@@ -108,12 +111,13 @@ exprType fold getSigReturn expr
       fold Nothing [ifT, ifF]
 
   | is _Funcall = do
-      let (fnPath, args) = expr^?!_Funcall
-      argTypes <- mapM (exprType fold getSigReturn) args
+      let (fn, args) = expr^?!_Funcall
 
-      getSigReturn fnPath argTypes
-
-  | is _Builtin = return $ Just (expr^?!_Builtin.sigReturn)
+      case fn of
+        Builtin sig -> return (Just $ sig^.sigReturn)
+        Fn fnPath   -> do
+          argTypes <- mapM (exprType fold getSigReturn) args
+          (^?_Right) `liftM` getSigReturn fnPath argTypes
   where
     is prism = has prism expr
 
@@ -173,32 +177,29 @@ paramLookup name = previewS $ trSig.sigParams.folded.filtered (matchName name)
     matchName name p = p^.paramName == name
 
 
-mkSigReturnGetter :: Scoped path ret m => PathLookup path -> SigReturnGetter m
+mkSigReturnGetter :: Scoped path ret m
+                  => PathLookup AbsoluteVarPath -> SigReturnGetter m
 mkSigReturnGetter lookupPath path paramTypes =
     case path of
       VParamName name ->
-        liftM (fmap $ view paramType) (paramLookup name)
+        maybe (Left []) (^.paramType.re _Right) `liftM` paramLookup name
 
       VAbsolutePath path ->
         let translations = lookupPath (path^.from absolute)
             matching     = filter (\tr -> partMatchParams1 paramTypes
                                                            (tr^..trParamTypes))
                                   translations
-        in return $ matching^?_Single.trSig.sigReturn
+        in return $ case matching of
+                      [tr] -> Right $ tr^.trSig.sigReturn
+                      _    -> Left  $ matching
 
 
 maybeToThrow :: ExprTypeM ret m => SigReturnGetter m -> SigReturnGetter m
 maybeToThrow maybeLookup path paramTypes =
     maybeLookup path paramTypes >>= \case
-      Just t  ->
-        return (Just t)
-
-      Nothing ->
-        maybe (Err.panic $ printf
-                "maybeToThrow: Missing parameter types for lookup: %s(%s)"
-                  (show path) (intercalate ", " $ map show paramTypes))
-              (Err.signatureNotFound path)
-              (sequence paramTypes)
+      Left [] -> Err.signatureNotMatched path paramTypes
+      Right t -> return (Right t)
+      Left ts -> Err.ambiguousOverloads path paramTypes ts
 
 
 {-

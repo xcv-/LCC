@@ -28,55 +28,64 @@ type ErrorM m = ME.MonadError Error m
 
 data Error where
 
-  Parse             :: { parseError :: ParseError }
-                    -> Error
+  Parse              :: { parseError :: ParseError }
+                     -> Error
 
-  RelativePath      :: forall path ret. (Show path, Show ret)
-                    => { scope :: Scope path ret
-                       , path  :: RelativeVarPath
-                       }
-                    -> Error
+  RelativePath       :: forall path ret. (Show path, Show ret)
+                     => { scope :: Scope path ret
+                        , path  :: RelativeVarPath
+                        }
+                     -> Error
 
-  Type              :: forall path ret. (Show path, Show ret)
-                    => { scope    :: Scope path ret
-                       , expected :: Type
-                       , found    :: Type
-                       }
-                    -> Error
+  Type               :: forall path ret. (Show path, Show ret)
+                     => { scope    :: Scope path ret
+                        , expected :: Type
+                        , found    :: Type
+                        }
+                     -> Error
 
-  SymbolNotFound    :: forall path ret. (Show path, Show ret)
-                    => { scope       :: Scope path ret
-                       , missingPath :: AbsoluteVarPath
-                       }
-                    -> Error
+  SymbolNotFound     :: forall path ret. (Show path, Show ret)
+                     => { scope       :: Scope path ret
+                        , missingPath :: AbsoluteVarPath
+                        }
+                     -> Error
 
-  SignatureNotFound :: forall path ret. (Show path, Show ret)
-                    => { scope       :: Scope path ret
-                       , missingPath :: AbsoluteVarPath
-                       , argTypes    :: [Type]
-                       }
-                    -> Error
+  SignatureNotFound  :: forall path ret. (Show path, Show ret)
+                     => { scope       :: Scope path ret
+                        , missingPath :: AbsoluteVarPath
+                        , argTypes    :: [Maybe Type]
+                        }
+                     -> Error
 
-  SignatureConflict :: forall ret. Show ret
-                    => { conflicting :: [AbsTranslation ret] }
-                    -> Error
+  AmbiguousOverloads :: forall path ret. (Show path, Show ret)
+                     => { scope         :: Scope path ret
+                        , ambiguousPath :: AbsoluteVarPath
+                        , argTypes      :: [Maybe Type]
+                        , candidates    :: [AnalyzedTranslation]
+                        }
+                     -> Error
 
-  Cycle             :: { cyclicSigs :: [AbsTranslation UnknownType] }
-                    -> Error
 
-  Interface         :: { localeName  :: String
-                       , missingSigs :: [Signature AbsolutePath Type]
-                       }
-                    -> Error
+  SignatureConflict  :: forall ret. Show ret
+                     => { conflicting :: [AbsTranslation ret] }
+                     -> Error
 
-  ScopedPanic       :: forall path ret. (Show path, Show ret)
-                    => { scope        :: Scope path ret
-                       , panicMessage :: String
-                       }
-                    -> Error
+  Cycle              :: { cyclicSigs :: [AbsTranslation UnknownType] }
+                     -> Error
 
-  Panic             :: { panicMessage :: String }
-                    -> Error
+  Interface          :: { localeName  :: String
+                        , missingSigs :: [Signature AbsolutePath Type]
+                        }
+                     -> Error
+
+  ScopedPanic        :: forall path ret. (Show path, Show ret)
+                     => { scope        :: Scope path ret
+                        , panicMessage :: String
+                        }
+                     -> Error
+
+  Panic              :: { panicMessage :: String }
+                     -> Error
 
 
 instance (Show path, Show ret) => Show (Scope path ret) where
@@ -109,15 +118,21 @@ instance Show Error where
 
   show SignatureNotFound {..} =
       printf "In %s: Signature not found: %s(%s)"
-          (show scope) (show missingPath) (intercalate ", " $ map show argTypes)
+          (show scope) (show missingPath) (showArgTypes argTypes)
+
+  show AmbiguousOverloads {..} =
+      intercalate "\n" $
+          printf "In %s: Matched multiple overloads for %s(%s):"
+            (show scope) (show ambiguousPath) (showArgTypes argTypes)
+              : map (show . Scope) candidates
 
   show SignatureConflict {..} =
       intercalate "\n" $
-          "Found conflicting signatures:" : map (show . view trSig) conflicting
+          "Found conflicting signatures:" : map (show . Scope) conflicting
 
   show Cycle {..} =
       intercalate "\n" $
-          "Dependency cycle found:" : map (show . view trSig) cyclicSigs
+          "Could not infer return types:" : map (show . Scope) cyclicSigs
 
   show Interface {..} =
       intercalate "\n" $
@@ -127,6 +142,9 @@ instance Show Error where
 
   show Panic {..} = printf "PANIC: %s" panicMessage
 
+
+showArgTypes :: [Maybe Type] -> String
+showArgTypes = intercalate ", " . map (maybe "?" show)
 
 
 invalidRelativePath :: (ErrorM m, Scoped path ret m, Show path, Show ret)
@@ -153,11 +171,27 @@ symbolNotFound missingPath = do
 
 
 
-signatureNotFound :: (ErrorM m, Scoped path ret m, Show path, Show ret)
-                  => AbsoluteVarPath -> [Type] -> m a
-signatureNotFound missingPath argTypes = do
+signatureNotMatched :: (ErrorM m, Scoped path ret m, Show path, Show ret)
+                  => AbsoluteVarPath -> [Maybe Type] -> m a
+signatureNotMatched missingPath argTypes = do
     scope <- viewS (to Scope)
     ME.throwError SignatureNotFound {..}
+
+
+signatureNotFound :: (ErrorM m, Scoped path ret m, Show path, Show ret)
+                  => AbsoluteVarPath -> [Type] -> m a
+signatureNotFound missingPath argTypes =
+    signatureNotMatched missingPath (map Just argTypes)
+
+
+ambiguousOverloads :: (ErrorM m, Scoped path ret m, Show path, Show ret)
+                   => AbsoluteVarPath
+                   -> [Maybe Type]
+                   -> [AnalyzedTranslation]
+                   -> m a
+ambiguousOverloads ambiguousPath argTypes candidates = do
+    scope <- viewS (to Scope)
+    ME.throwError AmbiguousOverloads {..}
 
 
 cycle :: ErrorM m => [AbsTranslation UnknownType] -> m a

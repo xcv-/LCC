@@ -16,8 +16,7 @@ import Control.Monad (liftM, liftM2, liftM3, forM_)
 import Control.Monad.Reader (MonadReader, runReaderT, asks)
 import Control.Monad.Writer (MonadWriter, execWriterT, tell, censor)
 
-import Debug.Trace
-
+import Data.Char (toLower, toUpper)
 import Data.Functor
 import Data.List
 import Data.Maybe
@@ -59,6 +58,7 @@ instance IsList (DL.DList a) where
 
 
 type Writing m = (MonadWriter (DL.DList T.Text) m, MonadReader JavaTarget m)
+type Snoc' s a = Snoc s s a a
 
 
 format1 :: Buildable b => Format -> b -> T.Text
@@ -94,17 +94,25 @@ indent m = do
           return (T.replicate tw " ")
 
 
-builtinParam :: Type -> Param
-builtinParam pType = Param pType "<?>"
+builtinParams :: [Type] -> [Param]
+builtinParams types =
+    zipWith (\t i -> Param t $ "arg" ++ show i) types [1,2..]
 
 
-builtinTranslation :: AbsSignature Type -> Translation path UnknownType
-builtinTranslation sig = Translation
-                           { _trSig         = sig & sigReturn .~ UnknownType
-                           , _trImpl        = Builtin sig
-                           , _trAnnotations = [PrivateBuiltin]
-                           , _trSourcePos   = newPos "<builtin>" 0 0
-                           }
+builtinTranslation :: FromParamName path
+                   => AbsSignature Type
+                   -> Translation path UnknownType
+builtinTranslation sig =
+    Translation
+      { _trSig         = sig & sigReturn .~ UnknownType
+      , _trImpl        = Funcall (Builtin sig) args
+      , _trAnnotations = [PrivateBuiltin]
+      , _trSourcePos   = newPos "<builtin>" 0 0
+      }
+  where
+    args :: FromParamName path => [Expr path]
+    args = map (\pName -> Funcall (Fn $ _ParamName # pName) [])
+               (sig^..sigParams.traverse.paramName)
 
 builtins :: FromAbsolute path
          => Map.Map AnalyzedSignature (Signature path Type, T.Text)
@@ -122,7 +130,7 @@ builtins = Map.fromList $ builtinMap
     , (["eq"], [TBool,   TBool],   TBool, "_Builtins.eq")
 
     , (["upper"], [TChar],   TChar,   "Character.toUpperCase")
-    , (["lower"], [TChar],   TChar,   "_Builtins.toLowerCase")
+    , (["lower"], [TChar],   TChar,   "Character.toLowerCase")
 
     , (["upper"], [TString], TString, "_Builtins.toUpper"   )
     , (["lower"], [TString], TString, "_Builtins.toLower"   )
@@ -144,7 +152,7 @@ builtins = Map.fromList $ builtinMap
   where
     builtinMap = map $ \(path, paramTypes, ret, replacement) ->
         let sig = Signature { _sigPath   = _Absolute # path
-                            , _sigParams = map builtinParam paramTypes
+                            , _sigParams = builtinParams paramTypes
                             , _sigReturn = ret
                             }
         in (sig & sigPath .~ _Absolute # path, (sig, replacement))
@@ -159,7 +167,6 @@ writeBuiltinsClass = writeClass
     , method "boolean" "eq"["boolean b1", "boolean b2"] "b1 == b2"
 
     , method "String" "toUpper"["String s"] "s.toUpperCase()"
-
     , method "String" "toLower"["String s"] "s.toLowerCase()"
 
     , method "String" "capitalize" ["String s"]
@@ -267,8 +274,10 @@ quoteString :: String -> T.Text
 quoteString = mconcat . map quoteStringChar
 
 
-removePrefix :: (IsList l, Eq (Item l)) => l -> l -> l
-removePrefix xs ys = fromList . fst . unzip $ dropWhile eq zipped
+removePrefix :: (Eq l, IsList l, Eq (Item l), Snoc' l (Item l)) => l -> l -> l
+removePrefix xs ys
+  | xs == ys  = fromList [xs^?!_last]
+  | otherwise = fromList . fst . unzip $ dropWhile eq zipped
   where
     zipped = zip (toList xs) (toList ys)
     eq = uncurry (==)
@@ -287,11 +296,27 @@ sigFmtArgs name t = (access, ret, name, argList)
     argList = T.intercalate ", " $ map fmtParam (t^.trSig.sigParams)
 
 
+fmtBuiltin :: (Err.ErrorM m, ScopedAbs Type m)
+           => AnalyzedAST -> AnalyzedSignature -> [AbsExpr] -> m T.Text
+fmtBuiltin ast sig args = do
+    case builtins^?ix sig of
+      Just (sig', subsFn) -> do
+        let _ = sig' `asTypeOf` sig
+
+        fmtdArgs <- mapM (fmtExpr ast) args
+
+        return $ format "{}({})" (subsFn, T.intercalate ", " fmtdArgs)
+
+      Nothing ->
+        Err.signatureNotFound (sig^.sigPath.absolute.re _Absolute)
+                              (sig^..sigParams.traverse.paramType)
+
+
 fmtExpr :: (Err.ErrorM m, ScopedAbs Type m) => AnalyzedAST -> AbsExpr -> m T.Text
 fmtExpr ast expr
   | is _IntL    = return $ expr^?!_IntL.to show.packed
   | is _DoubleL = return $ expr^?!_DoubleL.to show.packed
-  | is _BoolL   = return $ expr^?!_BoolL.to (\case {True->"true"; _->"false"})
+  | is _BoolL   = return $ expr^?!_BoolL.to (\case {True->"true";_->"false"})
   | is _CharL   = return . format1  "'{}'"  . quoteChar   $ expr^?!_CharL
   | is _StringL = return . format1 "\"{}\"" . quoteString $ expr^?!_StringL
   | is _Array   = fmtArray $ expr^?!_Array
@@ -299,14 +324,14 @@ fmtExpr ast expr
                                                   [] -> return ["\"\""]
                                                   xs -> mapM (fmtExpr ast) xs
   | is _Funcall = case expr^?!_Funcall of
-                    (VParamName name, args) -> return (name^.packed)
-                    (VAbsolutePath p, args) -> fmtFuncall p args
+                    (Builtin sig,          args) -> fmtBuiltin ast sig args
+                    (Fn (VParamName name), args) -> return (name^.packed)
+                    (Fn (VAbsolutePath p), args) -> fmtFuncall p args
 
-  | is _Cond    = let (c,t,f) = expr^?!_Cond
-                  in liftCM3 (format "({} ? {} : {})") (fmtExpr ast c)
-                                                       (fmtExpr ast t)
-                                                       (fmtExpr ast f)
-  | is _Builtin = return $ format1 "<builtin: {}>" (show expr)
+  | is _Cond = let (c,t,f) = expr^?!_Cond
+               in liftCM3 (format "({} ? {} : {})") (fmtExpr ast c)
+                                                    (fmtExpr ast t)
+                                                    (fmtExpr ast f)
   where
     is :: Prism' AbsExpr a -> Bool
     is prism = has prism expr
@@ -318,15 +343,15 @@ fmtExpr ast expr
         elemsFmt'd      <- mapM (fmtExpr ast) elems
 
         return $ format "new {}[] { {} }" ( elemType^.to javaType
-                                          , T.intercalate ", " elemsFmt'd)
-
+                                          , T.intercalate ", " elemsFmt'd
+                                          )
     fmtFuncall path args = do
-        relPath   <- liftM (removePrefix path) (viewS $ trSig.sigPath.absolute)
-        argsFmt'd <- mapM (fmtExpr ast) args
+        relPath  <- liftM (removePrefix path) (viewS $ trSig.sigPath.absolute)
+        fmtdArgs <- mapM (fmtExpr ast) args
 
         return $ format "{}({})" ( show (relPath^.from absolute)
-                                 , T.intercalate ", " argsFmt'd)
-
+                                 , T.intercalate ", " fmtdArgs
+                                 )
 
 
 writePreamble :: Writing m => m ()
@@ -402,7 +427,7 @@ writeLocalesArray :: Writing m => [AnalyzedLocale] -> m ()
 writeLocalesArray ls = do
     let strings = map (format1 "\"{}\"" . view localeName) ls
 
-    writef1 "public final {} _locales[] = {" =<< asks javaInterfaceName
+    writeln "public final String _locales[] = {"
     indent $ writeln $ T.intercalate ", " strings
     writeln "};"
 
@@ -467,3 +492,45 @@ instance Target JavaTarget where
         fileName    = javaInterfaceName t ++ ".java"
 
         replace what with = map (\x -> if x == what then with else x)
+
+
+    inlineBuiltin t sig args = return $
+        case sig^.sigPath of
+          ["capitalize"] ->
+            case args of
+              [StringL s] -> StringL (over _head toUpper s)
+              _           -> noop
+
+          ["eq"]
+            | all isLiteral args -> BoolL . isJust $
+                foldl1' (\acc x -> acc ?? Nothing $ acc == x) (map Just args)
+            | otherwise          -> noop
+
+          ["lower"] ->
+            case args of
+              [CharL   c] -> CharL   (toLower c)
+              [StringL s] -> StringL (map toLower s)
+              _           -> noop
+
+          ["upper"] ->
+            case args of
+              [CharL   c] -> CharL   (toUpper c)
+              [StringL s] -> StringL (map toUpper s)
+              _           -> noop
+
+          ["str"] ->
+            case args of
+              [IntL    x] -> StringL $ show x
+              [DoubleL x] -> StringL $ show x
+              [BoolL   b] -> StringL $ show b
+              [CharL   c] -> StringL $ show c
+              [StringL s] -> StringL $ show s
+              _           -> noop
+
+          _ -> noop
+      where
+        noop :: AbsExpr
+        noop = Funcall (Builtin sig) args
+
+        (??) :: a -> a -> Bool -> a
+        (??) t f c = if c then t else f

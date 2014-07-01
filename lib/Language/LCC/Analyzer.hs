@@ -141,7 +141,7 @@ inferReturnTypes l =
        (known', unknown') <- execStateT (revForM_ unknown inferPass)
                                         (known, [])
 
-       if Map.size known == Map.size known'
+       if length unknown == length unknown'
          then Err.cycle unknown'
          else return (known', unknown')
 

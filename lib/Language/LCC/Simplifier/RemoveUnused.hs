@@ -48,9 +48,9 @@ findCalls ast expr
       let (c,t,f) = expr^?!_Cond
       in liftM concat $ mapM (findCalls ast) [c,t,f]
 
-  | is (_Funcall._1._Absolute) =
+  | is (_Funcall._1._Fn._Absolute) =
       let (f,args) = expr^?!_Funcall
-          absPath  = f^?!_Absolute.from absolute
+          absPath  = f^?!_Fn._Absolute.from absolute
       in findFunction ast absPath args >>= \tr -> return [tr^.trSig]
 
   | otherwise = return []

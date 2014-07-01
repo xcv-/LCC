@@ -4,7 +4,7 @@ module Language.LCC.AST.Expr where
 import Control.Applicative
 import Control.Lens
 
-import Data.Foldable
+import Data.Foldable hiding (all)
 import Data.Functor
 import Data.Monoid
 import Data.Traversable
@@ -12,6 +12,13 @@ import Data.Traversable
 import Language.LCC.AST.Path
 import Language.LCC.AST.Signature
 
+
+data FuncallPath path
+    = Builtin AnalyzedSignature
+    | Fn path
+    deriving (Eq, Ord, Show)
+
+makePrisms ''FuncallPath
 
 
 data Expr path
@@ -23,11 +30,9 @@ data Expr path
     | SConcat [Expr path]
     | Array   [Expr path]
 
-    | Funcall path [Expr path]
+    | Funcall (FuncallPath path) [Expr path]
 
     | Cond    (Expr path) (Expr path) (Expr path)
-
-    | Builtin (Signature AbsolutePath Type)
     deriving (Eq, Ord, Show)
 
 makePrisms ''Expr
@@ -35,6 +40,29 @@ makePrisms ''Expr
 type RelExpr = Expr RelativeVarPath
 type AbsExpr = Expr AbsoluteVarPath
 type RawExpr = RelExpr
+
+
+isLiteral :: Expr path -> Bool
+isLiteral (IntL _)    = True
+isLiteral (DoubleL _) = True
+isLiteral (BoolL _)   = True
+isLiteral (CharL _)   = True
+isLiteral (StringL _) = True
+isLiteral (Array xs)  = all isLiteral xs
+isLiteral _           = False
+
+
+instance Functor FuncallPath where
+    fmap f (Fn p)        = Fn (f p)
+    fmap f (Builtin sig) = Builtin sig
+
+instance Foldable FuncallPath where
+    foldMap f (Fn p) = f p
+    foldMap f _      = mempty
+
+instance Traversable FuncallPath where
+    traverse f (Fn p)        = fmap Fn (f p)
+    traverse f (Builtin sig) = pure $ Builtin sig
 
 
 instance Functor Expr where
@@ -45,15 +73,14 @@ instance Functor Expr where
     fmap f (StringL x)         = StringL x
     fmap f (SConcat ss)        = SConcat $ (fmap.fmap) f ss
     fmap f (Array xs)          = Array $ (fmap.fmap) f xs
-    fmap f (Funcall path args) = Funcall (f path) $ (fmap.fmap) f args
+    fmap f (Funcall path args) = Funcall (fmap f path) $ (fmap.fmap) f args
     fmap f (Cond cond ifT ifF) = Cond (fmap f cond) (fmap f ifT) (fmap f ifF)
-    fmap f (Builtin sig)       = Builtin sig
 
 
 instance Foldable Expr where
     foldMap f (SConcat ss)        = (foldMap.foldMap) f ss
     foldMap f (Array xs)          = (foldMap.foldMap) f xs
-    foldMap f (Funcall path args) = f path <> (foldMap.foldMap) f args
+    foldMap f (Funcall path args) = foldMap f path <> (foldMap.foldMap) f args
     foldMap f (Cond cond ifT ifF) = foldMap f cond <> foldMap f ifT
                                                    <> foldMap f ifF
     foldMap _ _ = mempty
@@ -65,13 +92,12 @@ instance Traversable Expr where
     traverse f (BoolL x)           = pure $ BoolL x
     traverse f (CharL x)           = pure $ CharL x
     traverse f (StringL x)         = pure $ StringL x
-    traverse f (Builtin sig)       = pure $ Builtin sig
 
     traverse f (SConcat ss)        = SConcat <$> (traverse.traverse) f ss
 
     traverse f (Array xs)          = Array <$> (traverse.traverse) f xs
 
-    traverse f (Funcall path args) = Funcall <$> f path
+    traverse f (Funcall path args) = Funcall <$> traverse f path
                                              <*> (traverse.traverse) f args
 
     traverse f (Cond cond ifT ifF) = Cond <$> traverse f cond

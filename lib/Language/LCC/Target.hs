@@ -21,3 +21,7 @@ class Target t where
            => t
            -> [AnalyzedLocale]
            -> m [(FilePath, T.Text)]
+
+    inlineBuiltin :: Err.ErrorM m
+                  => t -> AnalyzedSignature -> [AbsExpr] -> m AbsExpr
+    inlineBuiltin _ sig args = return $ Funcall (Builtin sig) args

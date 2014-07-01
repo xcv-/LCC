@@ -196,7 +196,7 @@ processLocales target files = do
 
     let simplify = foldl1' (>=>)
                  [ return
-                 , localeAST (inline 20)
+                 , localeAST (inline 20 target)
                  , localeAST removeUnused
                  ]
 
@@ -227,7 +227,8 @@ writeOutput outputData = do
     forM_ outputData $ \(file, content) -> do
         createDirectoryIfMissing True (takeDirectory file)
         putStrLn $ "Writing " ++ file
-        TL.putStrLn content
+        --TL.putStrLn content
+        TL.writeFile file content
 
     putStrLn "Done."
     return ExitSuccess

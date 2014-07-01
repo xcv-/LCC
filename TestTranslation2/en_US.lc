@@ -1,0 +1,8 @@
+locale en_US:
+
+
+x[private]: (string w) -> eq("3",@w)
+y[private]: (int w) -> x(str(@w))
+z[private]: y(4)
+
+w: (bool w) -> if @w then z else w(if true then @w else false)

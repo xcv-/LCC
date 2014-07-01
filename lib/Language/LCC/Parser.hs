@@ -116,7 +116,7 @@ exprParser = try (IntL        <$> Lex.intLiteral)
          <|> try (parseString =<< Lex.stringLiteral)
          <|> try (Array       <$> Lex.brackets (Lex.commaSep exprParser))
 
-         <|> try (Funcall <$> functionPath <*> option [] argsParser)
+         <|> try (Funcall . Fn <$> functionPath <*> option [] argsParser)
 
          <|> try (Cond <$> (Lex.reserved "if"   *> exprParser)
                        <*> (Lex.reserved "then" *> exprParser)

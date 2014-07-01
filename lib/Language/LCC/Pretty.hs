@@ -68,13 +68,16 @@ instance (Pretty path, Pretty ret) => Pretty (Translation path ret) where
 
 
 
+instance Pretty path => Pretty (FuncallPath path) where
+    pretty (Fn path)     = pretty path
+    pretty (Builtin sig) = text "<builtin" <+> pretty sig <> char '>'
+
 instance Pretty path => Pretty (Expr path) where
     pretty (IntL i)      = tshow i
     pretty (DoubleL d)   = tshow d
     pretty (BoolL b)     = text $ if b then "true" else "false"
     pretty (CharL c)     = tshow c
     pretty (StringL s)   = tshow s
-    pretty (Builtin sig) = text "<builtin" <+> pretty sig <> char '>'
     pretty (Array xs)    = list (map pretty xs)
 
     pretty (SConcat ss) =
