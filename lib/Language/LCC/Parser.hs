@@ -97,12 +97,16 @@ annotationsParser anns = do
 
 translationParser :: AbsolutePath -> [Annotation] -> Parser RawTranslation
 translationParser path anns = do
+    pos <- getPosition
+
     params <- option [] $
                 Lex.parens (Lex.commaSep1 paramParser) <* Lex.symbol "->"
 
+    expr <- exprParser
+
     let sig = Signature path params UnknownType
 
-    Translation sig <$> exprParser <*> pure anns <*> getPosition
+    return $ Translation sig expr anns pos
 
 
 paramParser :: Parser Param
