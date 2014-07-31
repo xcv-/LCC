@@ -1,3 +1,5 @@
 dist
 *.class
 *.java
+.cabal-sandbox
+cabal.sandbox.config

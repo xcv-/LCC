@@ -65,11 +65,11 @@ flatOverloads = iso flattenOverloads groupOverloads
 
 unsafeExtractFst :: [(tag, a)] -> (tag, [a])
 unsafeExtractFst lfs = lfs & traverse %%~ _1 %~ First . Just
-                     & _1 %~ fromJust . getFirst
+                           & _1 %~ fromJust . getFirst
 
 unsafeExtractHead :: Cons' s tag => [(s,a)] -> (tag, [(s, a)])
-unsafeExtractHead sts = sts & traverse._1 %%~ (_1 %~ First . Just) . unsafeUncons
-                      & _1 %~ fromJust . getFirst
+unsafeExtractHead sts = sts & traverse._1 %%~ over _1 (First . Just) . unsafeUncons
+                            & _1 %~ fromJust . getFirst
 
 isSingleElement :: Cons' s tag => s -> Bool
 isSingleElement = hasn't (_tail._head)

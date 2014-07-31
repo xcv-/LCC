@@ -51,12 +51,6 @@ data JavaTarget = JavaTarget
     }
 
 
-instance IsList (DL.DList a) where
-    type Item (DL.DList a) = a
-    fromList = DL.fromList
-    toList = DL.toList
-
-
 type Writing m = (MonadWriter (DL.DList T.Text) m, MonadReader JavaTarget m)
 type Snoc' s a = Snoc s s a a
 
