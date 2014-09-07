@@ -49,7 +49,6 @@ l |>~ a = l %~ (|> a)
 
 -- Instances
 
-
 instance IsList (Seq.Seq a) where
     type Item (Seq.Seq a) = a
     toList = Foldable.toList

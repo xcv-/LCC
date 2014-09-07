@@ -1,8 +1,11 @@
-locale en_US:
+locale en_US
+    private int inX;
 
 # comments are allowed
 # myApplication is a subgroup
 myApplication: {
+    inputVal: "The input value is ${str(inX)}"
+
     myTranslation1: "Translated text goes here"
     myTranslation2: "Translations are separated by newlines"
 

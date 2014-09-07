@@ -28,23 +28,43 @@ import qualified Language.LCC.Error as Err
 import qualified Language.LCC.Lexer as Lex
 
 
-parseLocale :: Err.ErrorM m => String -> Text.Text -> m RawLocale
+parseLocale :: Err.ErrorM m => String -> Text.Text -> m (Bool, RawLocale, [Import])
 parseLocale filename fileContents =
     case parse localeParser filename fileContents of
       Right x -> return x
       Left e  -> Err.parsingError e
 
-localeParser :: Parser RawLocale
+localeParser :: Parser (Bool, RawLocale, [Import])
 localeParser = do
     Lex.whiteSpace
+
+    abstract <- option False (True <$ Lex.reserved "private")
+
     Lex.reserved "locale"
 
     name <- Lex.identifier
-    Lex.colon
+
+    inputs <- option [] $
+                  sepBy (do anns  <- many annotationParser
+                            param <- paramParser
+                            return (LocaleInput param anns))
+                        Lex.comma
+    Lex.semicolon
+
+    imports <- many importParser
 
     ast <- subtreeParser mempty []
+    eof
 
-    return (Locale name ast)
+    return (abstract, Locale name inputs ast, imports)
+
+
+importParser :: Parser Import
+importParser = do
+    path <- Lex.reserved "import" *> Lex.identifier
+    name <- Lex.reserved "as"     *> Lex.identifier
+
+    return (Import path name)
 
 
 nodeParser :: AbsolutePath -> [Annotation] -> Parser (PathNode, RawAST)
@@ -91,15 +111,6 @@ subtreeParser path anns = do
     toLeaf subtree    = fail $ "Expected leaf found subtree: " ++ show subtree
 
 
-annotationsParser :: [Annotation] -> Parser [Annotation]
-annotationsParser anns = do
-    anns' <- option [] $ Lex.brackets (Lex.commaSep annotationParser)
-
-    return $ nub (anns ++ anns')
-  where
-    annotationParser = Private <$ Lex.reserved "private"
-                   <?> "annotation"
-
 translationParser :: AbsolutePath -> [Annotation] -> Parser RawTranslation
 translationParser path anns = do
     pos <- getPosition
@@ -114,8 +125,20 @@ translationParser path anns = do
     return $ Translation sig expr anns pos
 
 
+annotationsParser :: [Annotation] -> Parser [Annotation]
+annotationsParser anns = do
+    anns' <- option [] $ Lex.brackets (Lex.commaSep annotationParser)
+
+    return $ nub (anns ++ anns')
+
+annotationParser :: Parser Annotation
+annotationParser = Private <$ Lex.reserved "private"
+               <?> "annotation"
+
+
 paramParser :: Parser Param
 paramParser = Param <$> typeParser <*> Lex.identifier
+
 
 exprParser :: Parser RawExpr
 exprParser = try (IntL        <$> Lex.intLiteral)
@@ -134,12 +157,11 @@ exprParser = try (IntL        <$> Lex.intLiteral)
   where
     argsParser = Lex.parens $ Lex.commaSep exprParser
 
-
 parseString :: String -> Parser RawExpr
 parseString str =
     case parse stringParser str (Text.pack str) of
         Right result -> return $ SConcat result
-        Left  _      -> unexpected "String parse error"
+        Left  e      -> unexpected $ "String parse error: " ++ show e
 
 stringParser :: Parser [RawExpr]
 stringParser = many stringChunksParser <* eof
@@ -162,14 +184,26 @@ stringChunksParser = try expr
 
 
 functionPath :: Parser RelativeVarPath
-functionPath = RVParamName    <$> (char '@' *> Lex.identifier)
-           <|> RVRelativePath <$> ((<|) <$> Lex.symbol "^" <*> toSeq relTail)
-           <|> RVAbsolutePath <$> ((<|) <$> Lex.identifier <*> toSeq absTail)
+functionPath = RVParamName    <$> paramNameParser
+           <|> RVRelativePath <$> relativePathParser
+           <|> RVAbsolutePath <$> absolutePathParser
            <?> "variable path"
-  where
-    toSeq = (Seq.fromList <$>)
-    relTail = many $ Lex.dot *> (Lex.symbol "^" <|> Lex.identifier)
-    absTail = many $ Lex.dot *> Lex.identifier
+
+absolutePathParser :: Parser (Seq.Seq PathNode)
+absolutePathParser = Seq.fromList <$> sepBy1 Lex.identifier Lex.dot
+
+paramNameParser :: Parser PathNode
+paramNameParser = char '@' *> Lex.identifier
+
+relativePathParser :: Parser (Seq.Seq PathNode)
+relativePathParser = do
+    let up = Lex.symbol "^"
+
+    h <- up <* Lex.dot
+    t <- sepBy1 (up <|> Lex.identifier) Lex.dot
+
+    return $ Seq.fromList (h <| t)
+
 
 typeParser :: Parser Type
 typeParser = rawTypeParser <**> (arrayTypeParser <|> pure id)

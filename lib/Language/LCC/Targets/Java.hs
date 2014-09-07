@@ -8,10 +8,12 @@
 {-# LANGUAGE OverloadedLists #-}
 module Language.LCC.Targets.Java where
 
+import Prelude hiding (init)
+
 import GHC.Exts (IsList(..))
 
 import Control.Lens hiding ((??))
-import Control.Monad (liftM, liftM3, when, zipWithM_)
+import Control.Monad (liftM, liftM3, when, forM, zipWithM_)
 import Control.Monad.Reader (MonadReader, runReaderT, ask, asks)
 import Control.Monad.Writer (MonadWriter, runWriterT, execWriterT, tell)
 import Control.Monad.State (MonadState, evalStateT, execStateT, get, put, modify)
@@ -19,8 +21,7 @@ import Control.Monad.State (MonadState, evalStateT, execStateT, get, put, modify
 import Data.Char (toLower, toUpper)
 import Data.Foldable (forM_)
 import Data.Function
-import Data.Functor
-import Data.List
+import Data.List hiding (init)
 import Data.Maybe
 import Data.Monoid
 import Data.Text.Lens
@@ -35,6 +36,7 @@ import Text.Parsec.Pos
 
 import System.FilePath ((</>))
 
+import Language.LCC.Analyzer
 import Language.LCC.AST
 import Language.LCC.Target
 import Language.LCC.TypeChecker
@@ -101,18 +103,6 @@ builtins = Map.fromList $ builtinMap
     , (["lower"], [TString], TString, "_Builtins.toLower"   )
 
     , (["capitalize"], [TString], TString, "_Builtins.capitalize")
-
-    , (["dynamicChar"],    [TString], TChar,   "_Builtins.getDynamicCharacter")
-    , (["dynamicString"],  [TString], TString, "_Builtins.getDynamicString"   )
-    , (["dynamicInt"],     [TString], TInt,    "_Builtins.getDynamicInteger"  )
-    , (["dynamicDouble"],  [TString], TDouble, "_Builtins.getDynamicDouble"   )
-    , (["dynamicBoolean"], [TString], TBool,   "_Builtins.getDynamicBoolean"  )
-
-    , (["hasDynamicChar"],    [TString], TBool, "_Builtins.hasDynamicCharacter")
-    , (["hasDynamicString"],  [TString], TBool, "_Builtins.hasDynamicString"   )
-    , (["hasDynamicInt"],     [TString], TBool, "_Builtins.hasDynamicInteger"  )
-    , (["hasDynamicDouble"],  [TString], TBool, "_Builtins.hasDynamicDouble"   )
-    , (["hasDynamicBoolean"], [TString], TBool, "_Builtins.hasDynamicBoolean"  )
     ]
   where
     builtinMap = map $ \(path, paramTypes, ret, replacement) ->
@@ -136,31 +126,13 @@ writeBuiltinsClass = writeClass
 
     , method "String" "capitalize" ["String s"]
         "s.length() < 1? s : Character.toUpperCase(s.charAt(0)) + s.substring(1)"
-
-    , getDynamic "String"
-    , getDynamic "char"
-    , getDynamic "int"
-    , getDynamic "double"
-    , getDynamic "boolean"
-
-    , hasDynamic "String"
-    , hasDynamic "char"
-    , hasDynamic "int"
-    , hasDynamic "double"
-    , hasDynamic "boolean"
-
-    , addDynamic
     ]
   where
     writeClass methods = do
         writeln "private static class _Builtins {"
 
-        indent $ do
-            writeln $ "private static Map<String, Object> dynamics = "
-                   <> "new HashMap<String, Object>();"
-
-            writeln ""
-            sequence_ $ intersperse (writeln "") methods
+        indent $
+          sequence_ $ intersperse (writeln "") methods
 
         writeln "}"
 
@@ -169,19 +141,6 @@ writeBuiltinsClass = writeClass
         let paramList = T.intercalate ", " params
         writefn "private static {} {}({}) {" (ret, name, paramList)
         indent $ writef1 "return {};" expr
-        writeln "}"
-
-    getDynamic ret =
-        method ret ("getDynamic" <> boxed ret) ["String name"] $
-            format1 "({}) dynamics.get(name)" ret
-
-    hasDynamic ret =
-        method "boolean" ("hasDynamic" <> boxed ret) ["String name"] $
-            "dynamics.get(name) instanceof " <> boxed ret
-
-    addDynamic = do
-        writeln "private static void addDynamic(String name, Object value) {"
-        indent $ writeln "dynamics.put(name, value);"
         writeln "}"
 
 
@@ -226,6 +185,13 @@ quoteString :: String -> T.Text
 quoteString = mconcat . map quoteStringChar
 
 
+isConstant :: Translation path ret -> Bool
+isConstant = null . _sigParams . _trSig
+
+isMethod :: Translation path ret -> Bool
+isMethod = not . isMethod
+
+
 fmtParam :: Param -> T.Text
 fmtParam param = format "{} {}" ( param^.paramType.to javaType
                                 , param^.paramName)
@@ -239,14 +205,6 @@ constArrayName t0 = "_constArray_" <> fmt t0
     fmt t          = t^.to show.packed
 
 
-varSigFmtArgs :: PathNode -> AnalyzedTranslation -> Int
-              -> (T.Text, T.Text, String, T.Text, Int)
-varSigFmtArgs name t i = (access, ret, name, constArray, i)
-  where
-    (access, ret, _, _) = sigFmtArgs name t
-    constArray = constArrayName (t^.trSig.sigReturn)
-
-
 sigFmtArgs :: PathNode -> AnalyzedTranslation -> (T.Text, T.Text, String, T.Text)
 sigFmtArgs name t = (access, ret, name, argList)
   where
@@ -255,20 +213,8 @@ sigFmtArgs name t = (access, ret, name, argList)
     argList = T.intercalate ", " $ map fmtParam (t^.trSig.sigParams)
 
 
-fmtBuiltin :: (Err.ErrorM m, ScopedAbs Type m)
-           => AnalyzedAST -> AnalyzedSignature -> [AbsExpr] -> m T.Text
-fmtBuiltin ast sig args =
-    case builtins^?ix sig of
-      Just (sig', subsFn) -> do
-        let _ = sig' `asTypeOf` sig
-
-        fmtdArgs <- mapM (fmtExpr ast) args
-
-        return $ format "{}({})" (subsFn, T.intercalate ", " fmtdArgs)
-
-      Nothing ->
-        Err.signatureNotFound (sig^.sigPath.absolute.re _Absolute)
-                              (sig^..sigParams.traverse.paramType)
+fmtInputArg :: String -> T.Text
+fmtInputArg name = "_in_" <> T.pack name
 
 
 fmtExpr :: (Err.ErrorM m, ScopedAbs Type m) => AnalyzedAST -> AbsExpr -> m T.Text
@@ -283,8 +229,9 @@ fmtExpr ast expr
                                                   [] -> return ["\"\""]
                                                   xs -> mapM (fmtExpr ast) xs
   | is _Funcall = case expr^?!_Funcall of
-                    (Builtin sig,          args) -> fmtBuiltin ast sig args
-                    (Fn (VParamName name), _   ) -> return (name^.packed)
+                    (Builtin sig,          args) -> fmtBuiltin sig args
+                    (Input _ name,         _   ) -> fmtInputArg name & return
+                    (Fn (VParamName name), _   ) -> fmtParamName name
                     (Fn (VAbsolutePath p), args) -> fmtFuncall p args
 
   | is _Cond = let (c,t,f) = expr^?!_Cond
@@ -305,6 +252,23 @@ fmtExpr ast expr
         return $ format "new {}[] { {} }" ( elemType^.to javaType
                                           , T.intercalate ", " elemsFmt'd
                                           )
+
+    fmtBuiltin sig args =
+        case builtins ^? ix sig of
+          Just (sig', subsFn) -> do
+            let _ = sig' `asTypeOf` sig
+
+            fmtdArgs <- mapM (fmtExpr ast) args
+
+            return $ format "{}({})" (subsFn, T.intercalate ", " fmtdArgs)
+
+          Nothing ->
+            Err.signatureNotFound (sig^.sigPath.absolute.re _Absolute)
+                                  (sig^..sigParams.traverse.paramType)
+
+    fmtParamName =
+        return . T.pack
+
     fmtFuncall path args = do
         let expr' = Funcall (Fn (VAbsolutePath path)) args
 
@@ -317,8 +281,6 @@ writePreamble :: Writing m => m ()
 writePreamble = do
     writef1 "package {};" =<< asks (T.pack . javaPackage)
     writeln ""
-    writeln "import java.util.Map;"
-    writeln "import java.util.HashMap;"
     writeln ""
 
 
@@ -359,8 +321,9 @@ writeConstArrayDecls types =
       writefn "private final {}[] {};" (javaType t, constArrayName t)
 
 
-writeInterfaceConstructor :: Writing m => [Type] -> [T.Text] -> m ()
-writeInterfaceConstructor types names = do
+writeInterfaceConstructor :: Writing m
+                          => [Type] -> [T.Text] -> [(PathNode, T.Text)]-> m ()
+writeInterfaceConstructor types names extraStmts = do
     writef1 "private {}(" =<< asks javaInterfaceName
 
     let firstType = head types
@@ -373,10 +336,16 @@ writeInterfaceConstructor types names = do
         types names
 
       writeln ") {"
+      writeln ""
 
-    indent $
+    indent $ do
       forM_ names $ \name ->
         writefn "this.{} = {};" (name, name)
+
+      writeln ""
+
+      forM_ extraStmts $ \(lhs, rhs) ->
+        writefn "this.{} = {};" (lhs, rhs)
 
     writeln "}"
     writeln ""
@@ -395,38 +364,69 @@ nextConstArrayIndex typ = do
 
 collectConstArrayTypes :: AnalyzedAST -> [Type]
 collectConstArrayTypes ast =
-    sort $ nub [ sig^.sigReturn | tr <- ast^..traverse, let sig = tr^.trSig
-               , null (sig^.sigParams) && isPublicTr tr ]
+    sort $ nub [tr^.trSig.sigReturn | tr <- ast^..traverse, isConstant tr]
 
 
-writeInterfaceBody :: (Err.ErrorM m, Writing m) => AnalyzedAST -> m ()
-writeInterfaceBody filteredAst =
-    case filteredAst of
+writeInterfaceBody :: (Err.ErrorM m, Writing m)
+                   => AnalyzedAST
+                   -> m [(PathNode, T.Text)]
+writeInterfaceBody ast =
+    case ast of
       Leaf trs ->
         Err.globalPanic $ "writeInterfaceBody: Translations at the top level: "
                             ++ show (trs^..traverse.trSig)
       Subtree m ->
-        evalStateT (foldMapWithTagsM m writeSignature writeNestedClass)
-                   Map.empty
-          >> return ()
+        evalStateT (writeTopLevel m) Map.empty
   where
-    writeSignature :: (Writing m, ConstArrayCountM m)
-                   => PathNode -> AnalyzedTranslation -> m Any
-    writeSignature name t
-      | null $ t^.trSig.sigParams = do
-          i <- nextConstArrayIndex $ t^.trSig.sigReturn
-          writefn "{} final {} {} = {}[{}];" (varSigFmtArgs name t i)
-          writeln ""
-          return (Any False)
+    writeTopLevel :: (Writing m, ConstArrayCountM m)
+                  => Map.Map PathNode AnalyzedAST -> m [(PathNode, T.Text)]
+    writeTopLevel m = do
+        let foreach = forM (Map.toList m) . uncurry
 
-      | otherwise = do
-          writefn "{} abstract {} {}({});" (sigFmtArgs name t)
-          writeln ""
-          return (Any True)
+        constructorStatements <-
+            foreach $ \name -> \case
+                Leaf trs ->
+                  liftM concat $
+                    forM trs $ \t ->
+                      if isConstant t
+                        then writeConstValDecl False name t & liftM return
+                        else writeAbstractDecl       name t >> return []
 
-    writeNestedClass :: (Writing m, ConstArrayCountM m)
-                     => PathNode -> Map.Map PathNode AnalyzedAST -> m Any
-    writeNestedClass name m = do
+                Subtree m' ->
+                  writeNestedClassDecl False name m' & liftM (return . fst)
+
+        return (concat constructorStatements)
+
+
+    writeConstValDecl :: (Writing m, ConstArrayCountM m)
+                      => Bool
+                      -> PathNode
+                      -> AnalyzedTranslation
+                      -> m (PathNode, T.Text)
+    writeConstValDecl init name t = do
+        let ret = t^.trSig.sigReturn
+        i <- nextConstArrayIndex ret
+
+        let array = constArrayName ret
+
+        let rhs = format "{}[{}]" (array, i)
+
+        writefn "public final {} {}{};" (javaType ret, name,
+            if init then " = " <> rhs else "")
+
+        return (name, rhs)
+
+    writeAbstractDecl :: Writing m => PathNode -> AnalyzedTranslation -> m ()
+    writeAbstractDecl name t = do
+        writefn "{} abstract {} {}({});" (sigFmtArgs name t)
+
+
+    writeNestedClassDecl :: (Writing m, ConstArrayCountM m)
+                         => Bool
+                         -> PathNode
+                         -> Map.Map PathNode AnalyzedAST
+                         -> m ((PathNode, T.Text), Any)
+    writeNestedClassDecl init name m = do
         writef1 "public abstract class {} {" name
 
         hasAbstractMembers <-
@@ -434,22 +434,40 @@ writeInterfaceBody filteredAst =
 
         writeln "}"
 
-        new <-
+        rhs <-
           if getAny hasAbstractMembers
             then do
               writefn "protected abstract {} _new_{}();" (name, name)
 
               return $ format1 "_new_{}()" name
-
             else
               return $ format "new {}() {}" (name, "{}" :: T.Text)
 
-        writefn "public final {} {} = {};" (name, name, new)
+        writefn "public final {} {}{};" (name, name,
+            if init then " = " <> rhs else "")
+
         writeln ""
 
-        return hasAbstractMembers
+        return ((name, rhs), hasAbstractMembers)
 
 
+    writeSignature :: (Writing m, ConstArrayCountM m)
+                   => PathNode -> AnalyzedTranslation -> m Any
+    writeSignature name t
+      | isConstant t = do
+          writeConstValDecl True name t
+          return (Any False)
+
+      | otherwise = do
+          writeAbstractDecl name t
+          return (Any True)
+
+    writeNestedClass :: (Writing m, ConstArrayCountM m)
+                     => PathNode
+                     -> Map.Map PathNode AnalyzedAST
+                     -> m Any
+    writeNestedClass name m =
+        writeNestedClassDecl True name m & liftM snd
 
 
 type ConstArrayValues = Map.Map Type (DL.DList (AbsolutePath, T.Text))
@@ -553,23 +571,30 @@ writeConstArrayValues arrays = do
 
 
 writeInstantiation :: (Err.ErrorM m, Writing m) => AnalyzedLocale -> m ()
-writeInstantiation l = do
+writeInstantiation (Locale name inputs ast) = do
     className <- asks javaInterfaceName
 
-    let (name, ast) = (l^.localeName, l^.localeAST)
+    let params = inputs <&> \(LocaleInput (Param t n) _) ->
+                     format "final {} {}" (javaType t, fmtInputArg n)
 
-    writefn "public final {} {} = new {}(" (className, name, className)
+    writefn "public static {} _locale_{}({}) {"
+        (className, name, T.intercalate ", " params)
 
+    indent $ do
+      writef1 "return new {}(" className
 
-    indent.indent $ do
-      writeConstArrayValues =<< collectConstArrayValues ast
+      indent.indent $ do
+        writeConstArrayValues =<< collectConstArrayValues ast
 
-      writeln ") {"
+        writeln ") {"
 
-    indent $
-      writeImplementations ast
+      indent $
+        writeImplementations ast
 
-    writeln "};"
+      writeln "};"
+
+    writeln "}"
+    writeln ""
 
 
 writeLocalesArray :: Writing m => [AnalyzedLocale] -> m ()
@@ -591,16 +616,16 @@ writeLocales ls = do
     indent $ do
       let sampleAST = head ls ^. localeAST
 
-      let constArrayTypes = collectConstArrayTypes sampleAST
-      let constArrayNames = map constArrayName constArrayTypes
+      let constTypes = collectConstArrayTypes sampleAST
+      let constNames = map constArrayName constTypes
 
-      writeConstArrayDecls constArrayTypes
+      writeConstArrayDecls constTypes
       writeln ""
 
-      writeInterfaceConstructor constArrayTypes constArrayNames
+      constructorStatements <- writeInterfaceBody sampleAST
       writeln ""
 
-      writeInterfaceBody sampleAST
+      writeInterfaceConstructor constTypes constNames constructorStatements
       writeln ""
 
       forM_ ls $ \l -> do
@@ -617,28 +642,10 @@ writeLocales ls = do
 
 instance Target JavaTarget where
     injectBuiltins _ l =
-        fold builtins $ \sig (builtinSig, _) -> do
-          let builtin = builtinTranslation builtinSig
-
-          localeAST.atPath (sig^.sigPath) %%~ \case
-            Just (Subtree _) ->
-              Err.globalPanic $
-                "Cannot insert builtin: subtree exists at the same path: "
-                  ++ show (sig^.sigPath)
-
-            node ->
-              Just . Leaf <$> insertNotConflicting builtin (node^?_Just._Leaf)
+        fold builtins $ \_ (builtinSig, _) ->
+          addTranslation (builtinTranslation builtinSig)
       where
         fold m f = Map.foldrWithKey' (\p b l' -> l' >>= f p b) (return l) m
-
-        insertNotConflicting :: (Err.ErrorM m, Show ret)
-                             => AbsTranslation ret
-                             -> Maybe [AbsTranslation ret]
-                             -> m [AbsTranslation ret]
-        insertNotConflicting builtin prevs =
-            case find (matchTrParams builtin) =<< prevs of
-              Nothing    -> return $ builtin : concat (maybeToList prevs)
-              Just confl -> Err.conflict [confl, builtin]
 
     output t ls = do
         let ls' = map (localeAST %~ sortOverloads . filterTree isPublicTr) ls

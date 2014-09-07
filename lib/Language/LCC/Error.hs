@@ -72,8 +72,8 @@ data Error where
                      -> Error
 
 
-  SignatureConflict  :: forall ret. Show ret
-                     => { conflicting :: [AbsTranslation ret] }
+  SignatureConflict  :: forall path ret. (Show path, Show ret)
+                     => { conflicting :: [Translation path ret] }
                      -> Error
 
   Cycle              :: { cyclicSigs :: [AbsTranslation UnknownType] }
@@ -227,7 +227,7 @@ cycle :: ErrorM m => [AbsTranslation UnknownType] -> m a
 cycle = ME.throwError . Cycle
 
 
-conflict :: (ErrorM m, Show ret) => [AbsTranslation ret] -> m a
+conflict :: (ErrorM m, Show path, Show ret) => [Translation path ret] -> m a
 conflict = ME.throwError . SignatureConflict
 
 

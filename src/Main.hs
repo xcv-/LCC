@@ -159,10 +159,12 @@ printParsed indir = do
     either displayError printPrettified parsed
   where
     printPrettified ls = ExitSuccess <$ do
-        forM_ ls $ \l -> do
+        forM_ ls $ \(_,l,_) -> do
+          putStrLn ""
           putStrLn $ "##### " ++ _localeName l ++ " #####"
           putDoc (pretty l)
-          putStrLn "" >> putStrLn ""
+          putStrLn ""
+          putStrLn ""
 
 
 
@@ -193,7 +195,10 @@ processLocales :: (Applicative m, Err.ErrorM m, Target t)
                -> m [(FilePath, TL.Text)]
 processLocales target files = do
     parsed   <- mapM (uncurry parseLocale) files
-    analyzed <- mapM (analyze target) parsed
+
+    imported <- resolveImports target parsed
+
+    analyzed <- mapM (analyze target) imported
 
     let simplify = foldl1' (>=>)
                  [ return
@@ -226,10 +231,10 @@ loadFiles directory = do
 writeOutput :: [(FilePath, TL.Text)] -> IO ExitCode
 writeOutput outputData = do
     forM_ outputData $ \(file, content) -> do
-        --createDirectoryIfMissing True (takeDirectory file)
+        createDirectoryIfMissing True (takeDirectory file)
         putStrLn $ "Writing " ++ file
-        TL.putStrLn content
-        --TL.writeFile file content
+        --TL.putStrLn content
+        TL.writeFile file content
 
     putStrLn "Done."
     return ExitSuccess

@@ -30,7 +30,7 @@ class Target t where
                    -> AbsLocale UnknownType
                    -> m (AbsLocale UnknownType)
 
-    output :: (Err.ErrorM m)
+    output :: (Err.ErrorM m, Applicative m)
            => t
            -> [AnalyzedLocale]
            -> m [(FilePath, T.Text)]

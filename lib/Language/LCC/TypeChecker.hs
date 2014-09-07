@@ -108,6 +108,7 @@ exprType fold getSigReturn expr
 
       case fn of
         Builtin sig -> return (Just $ sig^.sigReturn)
+        Input t _   -> return (Just t)
         Fn fnPath   -> do
           argTypes <- mapM (exprType fold getSigReturn) args
           (^?_Right) `liftM` getSigReturn fnPath argTypes

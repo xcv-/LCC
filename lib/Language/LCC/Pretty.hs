@@ -9,14 +9,22 @@ import Data.Text.Lazy.Lens (packed)
 import qualified Data.Map as Map
 import qualified Data.Text.Lazy as T
 
-import Text.PrettyPrint.Leijen.Text
+import Text.PrettyPrint.Leijen.Text hiding (string)
 import Text.Parsec.Pos
 
 import Language.LCC.AST
 
 
+string :: String -> Doc
+string = text . fromString
+
 tshow :: Show a => a -> Doc
-tshow = text . fromString . show
+tshow = string . show
+
+
+prettyParamList :: [Param] -> Doc
+prettyParamList params =
+    encloseSep lparen rparen (text ", ") (map pretty params)
 
 
 instance Pretty RelativePath where
@@ -44,15 +52,17 @@ instance Pretty Param where
 
 instance (Pretty path, Pretty ret) => Pretty (Signature path ret) where
     pretty s = pretty (s^.sigPath) <> colon
-           <+> params <+> text "->"
+           <+> encloseSep lparen rparen (text ", ") (map pretty $ s^.sigParams)
+           <+> text "->"
            <+> pretty (s^.sigReturn)
-      where
-        params = encloseSep lparen rparen (text ", ") (map pretty $ s^.sigParams)
 
 instance Pretty SourcePos where
     pretty p = dquotes (sourceName p^.packed.to text)
            <+> char 'l' <> int (sourceLine p)
            <+> char 'c' <> int (sourceColumn p)
+
+instance Pretty Annotation where
+    pretty = tshow
 
 instance (Pretty path, Pretty ret) => Pretty (Translation path ret) where
     pretty t = nest 4 $ body <$> comment
@@ -69,8 +79,11 @@ instance (Pretty path, Pretty ret) => Pretty (Translation path ret) where
 
 
 instance Pretty path => Pretty (FuncallPath path) where
-    pretty (Fn path)     = pretty path
-    pretty (Builtin sig) = text "<builtin" <+> pretty sig <> char '>'
+    pretty (Fn path)      = pretty path
+    pretty (Builtin sig)  = text "<builtin" <+> pretty sig <> char '>'
+    pretty (Input t name) = text "<input"
+                            <+> string name <> char ':' <+> pretty t
+                         <> char '>'
 
 instance Pretty path => Pretty (Expr path) where
     pretty (IntL i)      = tshow i
@@ -119,7 +132,12 @@ instance (Pretty tag, Pretty a) => Pretty (TaggedTree tag a) where
 
 
 instance (Pretty path, Pretty ret) => Pretty (Locale path ret) where
-    pretty l = text "locale " <> l^.localeName.packed.to text
+    pretty l = text "locale " <> (l^.localeName.packed.to text)
+            <> encloseSep (text "  ") (char ';') (text ", ") params
             <> line
             <> line
             <> pretty (l^.localeAST)
+      where
+        params = map (\(LocaleInput param anns) ->
+                          hsep (map pretty anns) <+> pretty param)
+                     (l^.localeInputs)

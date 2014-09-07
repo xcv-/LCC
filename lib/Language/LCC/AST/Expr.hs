@@ -14,7 +14,7 @@ import Language.LCC.AST.Signature
 
 data FuncallPath path
     = Builtin AnalyzedSignature
-    | Input PathNode
+    | Input Type PathNode
     | Fn path
     deriving (Eq, Ord, Show)
 
@@ -53,16 +53,18 @@ isLiteral _           = False
 
 
 instance Functor FuncallPath where
-    fmap f (Fn p)        = Fn (f p)
-    fmap _ (Builtin sig) = Builtin sig
+    fmap f (Fn p)         = Fn (f p)
+    fmap _ (Builtin sig)  = Builtin sig
+    fmap _ (Input t name) = Input t name
 
 instance Foldable FuncallPath where
     foldMap f (Fn p) = f p
     foldMap _ _      = mempty
 
 instance Traversable FuncallPath where
-    traverse f (Fn p)        = fmap Fn (f p)
-    traverse _ (Builtin sig) = pure $ Builtin sig
+    traverse f (Fn p)         = fmap Fn (f p)
+    traverse _ (Builtin sig)  = pure $ Builtin sig
+    traverse _ (Input t name) = pure $ Input t name
 
 
 instance Functor Expr where

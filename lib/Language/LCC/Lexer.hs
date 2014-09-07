@@ -8,6 +8,7 @@ module Language.LCC.Lexer
   , braces
   , brackets
   , dot
+  , semicolon
   , colon
   , comma
   , commaSep
@@ -39,7 +40,8 @@ lcKeywords, javaKeywords, cppKeywords :: [String]
 
 lcKeywords = ["locale", "int",    "double", "bool",
               "char",   "string", "true",   "false",
-              "if",     "then",   "else",   "private"]
+              "if",     "then",   "else",   "private",
+              "include"]
 
 javaKeywords = ["abstract", "continue",     "for",       "new",
                 "switch",   "assert",       "default",   "goto",
@@ -116,10 +118,11 @@ parens   = Tok.parens   lc
 braces   = Tok.braces   lc
 brackets = Tok.brackets lc
 
-dot, colon, comma :: Parser String
-dot   = Tok.dot   lc
-colon = Tok.colon lc
-comma = Tok.comma lc
+dot, semicolon, colon, comma :: Parser String
+dot       = Tok.dot   lc
+semicolon = Tok.semi  lc
+colon     = Tok.colon lc
+comma     = Tok.comma lc
 
 commaSep, commaSep1 :: Parser a -> Parser [a]
 commaSep  = Tok.commaSep  lc

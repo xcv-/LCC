@@ -52,6 +52,7 @@ inlineExpr expr
 
       case fn of
         Builtin sig          -> inlineBuiltin t sig inlinedArgs
+        Input _ _            -> return expr
         Fn (VAbsolutePath p) -> inlineFuncall (p^.from absolute) inlinedArgs
         Fn (VParamName name) -> fromMaybe expr `liftM` findBoundParam name
 

@@ -1,7 +1,11 @@
-locale es_ES:
+locale es_ES
+    private char inC,
+    private string inS;
 
 # all comments are in en_US.lc
 myApplication: {
+    inputVal: "Los valores de entrada son ${str(inC)} y ${inS}"
+
     myTranslation1: "El texto traducido va aquí"
     myTranslation2: "Las traducciones están separadas por líneas"
 

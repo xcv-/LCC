@@ -7,9 +7,13 @@ import Control.Lens.TH (makePrisms)
 data Annotation
     = PrivateBuiltin
     | Private
-    deriving (Eq, Ord, Show)
+    deriving (Eq, Ord)
 
 makePrisms ''Annotation
+
+instance Show Annotation where
+    show PrivateBuiltin = "private_builtin"
+    show Private        = "private"
 
 
 isBuiltin :: Annotation -> Bool

@@ -7,6 +7,8 @@ module Language.LCC.Analyzer where
 
 import Prelude hiding (mapM, mapM_, sequence)
 
+import GHC.Exts (fromList)
+
 import Control.Applicative
 import Control.Arrow (first, second)
 import Control.Lens
@@ -20,10 +22,25 @@ import Data.Sequence (ViewL(..), ViewR(..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Sequence as Seq
 
+import Text.Parsec.Pos
+
 import Language.LCC.AST
 import Language.LCC.Target
 import Language.LCC.TypeChecker
 import qualified Language.LCC.Error as Err
+
+
+resolveImports :: (Applicative m, Err.ErrorM m, Target t)
+               => t
+               -> [(Bool, RawLocale, [Import])]
+               -> m [RawLocale]
+resolveImports _ ls = do
+    let withImports = [undefined | (_,_,imports) <- ls, not (null imports)]
+
+    when (not $ null withImports) $
+      Err.globalPanic "Imports aren't implemented yet"
+
+    return [l | (False, l, _) <- ls]
 
 
 analyze :: (Applicative m, Err.ErrorM m, Target t)
@@ -33,7 +50,9 @@ analyze :: (Applicative m, Err.ErrorM m, Target t)
 analyze target rawLocale = do
     withAbsolutePaths <- toAbsolute rawLocale
 
-    withBuiltins <- injectBuiltins target withAbsolutePaths
+    withInputs <- injectInputs withAbsolutePaths
+
+    withBuiltins <- injectBuiltins target withInputs
 
     verifyNameLookup withBuiltins
 
@@ -73,6 +92,47 @@ toAbsolute = localeAST.traverse %%~ (./> trImpl.traverse %%~ toAbsPath)
 
             down :< pathTail -> toAbsPath' (relTo|>down) pathTail
 
+
+
+addTranslation :: (Applicative m, Err.ErrorM m, Eq path, Show path, Show ret)
+               => Translation path ret
+               -> Locale path ret
+               -> m (Locale path ret)
+addTranslation tr =
+    localeAST.atPath (tr^.trSig.sigPath) %%~ \case
+      Just (Subtree _) ->
+        Err.globalPanic $
+          "Cannot insert translation: subtree exists at the same path: "
+            ++ show (tr^.trSig.sigPath)
+
+      node ->
+        Just . Leaf <$> insertIntoLeaf (node^?_Just._Leaf)
+  where
+    insertIntoLeaf prevs =
+        case find (matchTrParams tr) =<< prevs of
+          Nothing    -> return $ tr : (prevs^.._Just.traverse)
+          Just confl -> Err.conflict [confl, tr]
+
+
+injectInputs :: (Applicative m, Err.ErrorM m)
+             => AbsLocale UnknownType
+             -> m (AbsLocale UnknownType)
+injectInputs l =
+    foldrM (addTranslation . tr) l (l^.localeInputs)
+  where
+    tr (LocaleInput p anns) =
+         Translation
+           { _trSig  = sig p
+           , _trImpl = Funcall (Input (p^.paramType) (p^.paramName)) []
+           , _trAnnotations = anns
+           , _trSourcePos   = newPos "<input>" 0 0
+           }
+
+    sig p = Signature
+              { _sigPath   = fromList [p^.paramName]
+              , _sigParams = []
+              , _sigReturn = UnknownType
+              }
 
 
 verifyNameLookup :: (Err.ErrorM m, Show ret) => AbsLocale ret -> m ()

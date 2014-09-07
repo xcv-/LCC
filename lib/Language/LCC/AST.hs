@@ -11,8 +11,13 @@ module Language.LCC.AST
   , module Language.LCC.AST.Signature
   , module Language.LCC.AST.Translation
 
+  , LocaleInput(..)
+  , inputParam
+  , inputAnnotations
+
   , Locale (..)
   , localeName
+  , localeInputs
   , localeAST
 
   , RelLocale
@@ -20,6 +25,10 @@ module Language.LCC.AST
 
   , RawLocale
   , AnalyzedLocale
+
+  , Import (..)
+  , importPath
+  , importName
   ) where
 
 import Control.Lens
@@ -36,10 +45,23 @@ import Language.LCC.AST.Signature
 import Language.LCC.AST.Translation
 
 
-data Locale path ret = Locale { _localeName :: String
-                              , _localeAST  :: AST path ret
+
+data LocaleInput = LocaleInput { _inputParam       :: Param
+                               , _inputAnnotations :: [Annotation]
+                               }
+  deriving (Eq, Show)
+
+makeLenses ''LocaleInput
+
+
+data Locale path ret = Locale { _localeName   :: String
+                              , _localeInputs :: [LocaleInput]
+                              , _localeAST    :: AST path ret
                               }
   deriving (Eq, Show)
+
+makeLenses ''Locale
+
 
 type RelLocale ret = Locale RelativeVarPath ret
 type AbsLocale ret = Locale AbsoluteVarPath ret
@@ -47,4 +69,10 @@ type AbsLocale ret = Locale AbsoluteVarPath ret
 type RawLocale = RelLocale UnknownType
 type AnalyzedLocale = AbsLocale Type
 
-makeLenses ''Locale
+
+data Import = Import { _importPath :: PathNode
+                     , _importName :: PathNode
+                     }
+  deriving (Eq, Show)
+
+makeLenses ''Import
