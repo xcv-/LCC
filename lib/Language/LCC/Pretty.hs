@@ -113,6 +113,9 @@ instance (Pretty tag, Pretty a) => Pretty (TaggedTree tag a) where
                                 Leaf [x]  -> pretty x
                                 Subtree _ -> nest 4 (lbrace <$> pretty a)
                                                             <$> rbrace
+                                Leaf _ ->
+                                  error $
+                                    "Pretty(TaggedTree): non-singleton leaf"
 
 
 instance (Pretty path, Pretty ret) => Pretty (Locale path ret) where

@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE LambdaCase #-}
@@ -12,11 +13,7 @@ import GHC.Exts (IsList, Item, toList)
 import Control.Applicative
 import Control.Lens
 
-import Data.Foldable hiding (toList)
-import Data.Functor
-import Data.Maybe
-import Data.Monoid
-import Data.Sequence (ViewL(..), ViewR(..))
+import Data.Foldable hiding (toList, for_)
 import Data.Traversable
 
 import qualified Data.Map.Strict as Map
@@ -49,19 +46,19 @@ instance Traversable (TaggedTree tag) where
     sequenceA (Leaf x)    = Leaf <$> sequenceA x
 
 instance Ord tag => Ixed (TaggedTree tag a) where
-    ix k f tree@(Leaf _) = pure tree
+    ix _ _ tree@(Leaf _) = pure tree
     ix k f tree@(Subtree m) = case Map.lookup k m of
         Nothing -> pure tree
         Just v  -> (\v' -> Subtree $ Map.insert k v' m) <$> f v
 
 instance Ord tag => At (TaggedTree tag a) where
-    at k = lens get set
+    at k = lens getter setter
       where
-        get (Subtree m) = Map.lookup k m
-        get (Leaf _) = Nothing
+        getter (Subtree m) = Map.lookup k m
+        getter (Leaf _) = Nothing
 
-        set tree@(Leaf _) _  = tree
-        set (Subtree m) mv = case mv of
+        setter tree@(Leaf _) _  = tree
+        setter (Subtree m) mv   = case mv of
             Nothing -> Subtree (Map.delete k m)
             Just v  -> Subtree (Map.insert k v m)
 
@@ -78,11 +75,11 @@ filterTree p tree =
     case tree of
       Leaf xs   -> Leaf (filter p xs)
       Subtree m -> let m' = fmap (filterTree p) m
-                   in Subtree $ Map.filter (not . empty) m'
+                   in Subtree $ Map.filter (not . isEmpty) m'
   where
-    empty (Subtree m) = Map.null m
-    empty (Leaf [])   = True
-    empty _           = False
+    isEmpty (Subtree m) = Map.null m
+    isEmpty (Leaf [])   = True
+    isEmpty _           = False
 
 
 mapWithTagsM_ :: (Monad m, Ord tag)
@@ -122,6 +119,3 @@ atPath path =
         Subtree m
           | Map.null m -> Just ()
           | otherwise  -> Nothing
-
-    uncons []     = Nothing
-    uncons (x:xs) = Just (x,xs)

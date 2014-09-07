@@ -29,6 +29,7 @@ import Language.LCC.Simplifier.Inline
 import Language.LCC.Simplifier.RemoveUnused
 import qualified Language.LCC.Error as Err
 
+import Debug.Trace
 
 
 main :: IO ()
@@ -191,8 +192,8 @@ processLocales :: (Applicative m, Err.ErrorM m, Target t)
                -> [(FilePath, T.Text)]
                -> m [(FilePath, TL.Text)]
 processLocales target files = do
-    parsed     <- mapM (uncurry parseLocale) files
-    analyzed   <- mapM (analyze target) parsed
+    parsed   <- mapM (uncurry parseLocale) files
+    analyzed <- mapM (analyze target) parsed
 
     let simplify = foldl1' (>=>)
                  [ return
@@ -225,10 +226,10 @@ loadFiles directory = do
 writeOutput :: [(FilePath, TL.Text)] -> IO ExitCode
 writeOutput outputData = do
     forM_ outputData $ \(file, content) -> do
-        createDirectoryIfMissing True (takeDirectory file)
+        --createDirectoryIfMissing True (takeDirectory file)
         putStrLn $ "Writing " ++ file
-        --TL.putStrLn content
-        TL.writeFile file content
+        TL.putStrLn content
+        --TL.writeFile file content
 
     putStrLn "Done."
     return ExitSuccess

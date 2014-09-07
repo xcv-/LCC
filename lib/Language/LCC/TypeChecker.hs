@@ -8,17 +8,11 @@ import Prelude hiding (mapM, sequence, all)
 
 import Control.Applicative
 import Control.Lens
-import Control.Monad (join, when, liftM, liftM2, (>=>))
-import Control.Monad.Except (throwError, catchError)
-import Control.Monad.Reader (ask)
+import Control.Monad (join, liftM, liftM2)
+import Control.Monad.Except (catchError)
 
-import Data.Foldable
-import Data.List (intercalate)
-import Data.Maybe
-import Data.Monoid
+import Data.Foldable hiding (fold)
 import Data.Traversable
-
-import Text.Printf (printf)
 
 import Language.LCC.AST
 import qualified Language.LCC.Error as Err
@@ -90,7 +84,6 @@ exprType :: ExprTypeM ret m
          -> AbsExpr
          -> m (Maybe Type)
 exprType fold getSigReturn expr
-  -- | trace ("exprType " ++ show expr) False = undefined
   | is _IntL    = return (Just TInt)
   | is _DoubleL = return (Just TDouble)
   | is _BoolL   = return (Just TBool)
@@ -105,10 +98,11 @@ exprType fold getSigReturn expr
   | is _Array =
       (liftM.fmap) TArray $ fold Nothing (expr^?!_Array)
 
-  | is _Cond = do
+  | is _Cond =
       let (condition, ifT, ifF) = expr^?!_Cond
-      fold (Just TBool) [condition]
-      fold Nothing [ifT, ifF]
+
+      in fold (Just TBool) [condition]
+      >> fold Nothing [ifT, ifF]
 
   | is _Funcall = do
       let (fn, args) = expr^?!_Funcall
@@ -118,8 +112,10 @@ exprType fold getSigReturn expr
         Fn fnPath   -> do
           argTypes <- mapM (exprType fold getSigReturn) args
           (^?_Right) `liftM` getSigReturn fnPath argTypes
+
+  | otherwise = error $ "exprType: unknown Expression: " ++ show expr
   where
-    is prism = has prism expr
+    is p = has p expr
 
 
 
@@ -140,7 +136,7 @@ foldInferNothrow getSigReturn known =
 
     altSkipErrors :: Err.ErrorM m
                   => m (Maybe Type) -> m (Maybe Type) -> m (Maybe Type)
-    altSkipErrors acc t = liftM2 (<|>) acc (t `catchError` \e -> return Nothing)
+    altSkipErrors acc t = liftM2 (<|>) acc (t `catchError` \_ -> return Nothing)
 
 
 foldCheck :: ExprTypeM ret m => SigReturnGetter m -> TypeFolder m
@@ -152,17 +148,15 @@ foldCheck getSigReturn expected exprs =
     exprType' = exprType (foldCheck getSigReturn) getSigReturn
 
     checkEqual :: ExprTypeM ret m => Maybe Type -> Maybe Type -> m (Maybe Type)
-    checkEqual (Just expected) (Just found)
-      | expected == found = return (Just found)
-      | otherwise         = Err.typeError expected found
+    checkEqual (Just expect) (Just found)
+      | expect == found = return (Just found)
+      | otherwise       = Err.typeError expect found
 
-    checkEqual expected found = return (expected <|> found)
+    checkEqual expect found = return (expect <|> found)
 
 
 
 -- SigReturnGetters
-
-
 
 mapLookup :: FlatASTMap path Type -> PathLookup path
 mapLookup astMap path = astMap ^.. ix path.traverse
@@ -171,10 +165,10 @@ astLookup :: AST path Type -> PathLookup path
 astLookup ast path = ast ^.. atPath path._Just._Leaf.traverse
 
 paramLookup :: Scoped path ret m => String -> m (Maybe Param)
-paramLookup name = previewS $ trSig.sigParams.folded.filtered (matchName name)
+paramLookup name = previewS $ trSig.sigParams.folded.filtered matchName
   where
-    matchName :: String -> Param -> Bool
-    matchName name p = p^.paramName == name
+    matchName :: Param -> Bool
+    matchName p = p^.paramName == name
 
 
 mkSigReturnGetter :: Scoped path ret m
@@ -184,14 +178,14 @@ mkSigReturnGetter lookupPath path paramTypes =
       VParamName name ->
         maybe (Left []) (^.paramType.re _Right) `liftM` paramLookup name
 
-      VAbsolutePath path ->
-        let translations = lookupPath (path^.from absolute)
-            matching     = filter (\tr -> partMatchParams1 paramTypes
+      VAbsolutePath absPath ->
+        let translations = lookupPath (absPath^.from absolute)
+            matched      = filter (\tr -> partMatchParams1 paramTypes
                                                            (tr^..trParamTypes))
                                   translations
-        in return $ case matching of
+        in return $ case matched of
                       [tr] -> Right $ tr^.trSig.sigReturn
-                      _    -> Left  $ matching
+                      _    -> Left  $ matched
 
 
 maybeToThrow :: ExprTypeM ret m => SigReturnGetter m -> SigReturnGetter m

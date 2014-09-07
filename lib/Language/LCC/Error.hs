@@ -8,9 +8,8 @@ module Language.LCC.Error where
 
 import Control.Lens
 import qualified Control.Monad.Except as ME
-import Control.Monad.Reader
 
-import Data.Functor
+import Data.Function (on)
 import Data.List
 
 import Text.Parsec
@@ -22,6 +21,13 @@ import Language.LCC.AST
 newtype Scope path ret = Scope { _scopeTr :: Translation path ret }
 
 makeLenses ''Scope
+
+
+data MissingSignature = MissingSignature
+    { missingInLocale   :: String
+    , missingSig        :: AnalyzedSignature
+    , missingComparedTo :: String
+    }
 
 
 type ErrorM m = ME.MonadError Error m
@@ -73,9 +79,7 @@ data Error where
   Cycle              :: { cyclicSigs :: [AbsTranslation UnknownType] }
                      -> Error
 
-  Interface          :: { localeName  :: String
-                        , missingSigs :: [Signature AbsolutePath Type]
-                        }
+  MissingSignatures  :: { missingSigs :: [MissingSignature] }
                      -> Error
 
   ScopedPanic        :: forall path ret. (Show path, Show ret)
@@ -134,9 +138,21 @@ instance Show Error where
       intercalate "\n" $
           "Could not infer return types:" : map (show . Scope) cyclicSigs
 
-  show Interface {..} =
-      intercalate "\n" $
-          ("Missing signatures in " ++ show localeName) : map show missingSigs
+  show MissingSignatures {..} =
+    let formatted = missingSigs
+                  & map (\MissingSignature {..} ->
+                          ((missingComparedTo, missingInLocale), missingSig))
+                  & sortBy (compare `on` fst)
+                  & groupByFst
+                  & traverse._2 %~ concatMap ("\n\t"++) . map show
+                  :: [((String, String), String)]
+
+        groupHdr = printf "Found in %s, but missing in %s:"
+
+    in intercalate "\n" $
+         "Found missing signatures:\n" :
+           map (\((f,l),list) -> groupHdr f l ++ list) formatted
+
 
   show ScopedPanic {..} = printf "In %s: PANIC: %s" (show scope) panicMessage
 
@@ -147,12 +163,12 @@ showArgTypes :: [Maybe Type] -> String
 showArgTypes = intercalate ", " . map (maybe "?" show)
 
 
+
 invalidRelativePath :: (ErrorM m, Scoped path ret m, Show path, Show ret)
                     => RelativeVarPath -> m a
 invalidRelativePath path = do
     scope <- viewS (to Scope)
     ME.throwError RelativePath {..}
-
 
 
 typeError :: (ErrorM m, Scoped path ret m, Show path, Show ret)
@@ -162,13 +178,11 @@ typeError expected found = do
     ME.throwError Type {..}
 
 
-
 symbolNotFound :: (ErrorM m, Scoped path ret m, Show path, Show ret)
                => AbsoluteVarPath -> m a
 symbolNotFound missingPath = do
     scope <- viewS (to Scope)
     ME.throwError SymbolNotFound {..}
-
 
 
 signatureNotMatched :: (ErrorM m, Scoped path ret m, Show path, Show ret)
@@ -200,6 +214,10 @@ cycle = ME.throwError . Cycle
 
 conflict :: (ErrorM m, Show ret) => [AbsTranslation ret] -> m a
 conflict = ME.throwError . SignatureConflict
+
+
+missingSignatures :: ErrorM m => [MissingSignature] -> m a
+missingSignatures = ME.throwError . MissingSignatures
 
 
 panic :: (ErrorM m, Scoped path ret m, Show path, Show ret)

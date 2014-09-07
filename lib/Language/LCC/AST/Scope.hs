@@ -19,14 +19,11 @@ import qualified Control.Monad.Trans.State.Strict as S
 
 import Control.Monad.Reader hiding (mapM, mapM_)
 import Control.Monad.Writer hiding (mapM, mapM_)
-import Control.Monad.State hiding (mapM, mapM_)
+import Control.Monad.State  hiding (mapM, mapM_)
 import Control.Monad.Except hiding (mapM, mapM_)
 
 import Data.Foldable
 import Data.Traversable
-
-import Text.Parsec.Pos
-import Text.Printf (printf)
 
 import Data.TaggedTree
 

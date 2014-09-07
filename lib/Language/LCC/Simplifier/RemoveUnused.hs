@@ -6,23 +6,20 @@ import Prelude hiding (any, mapM, concat)
 
 import Control.Lens
 import Control.Monad (liftM)
-import Control.Monad.State.Strict (MonadState, execStateT, modify)
 
 import Data.Foldable
 import Data.Functor
 import Data.Graph
 import Data.Traversable
 
-import qualified Data.Map.Lazy as Map
-
 import Language.LCC.AST
 import Language.LCC.TypeChecker
 import qualified Language.LCC.Error as Err
 
 
-type GraphData = [(AnalyzedTranslation, AnalyzedSignature, [AnalyzedSignature])]
-type V2N = Vertex -> (AnalyzedTranslation, AnalyzedSignature, [AnalyzedSignature])
-type K2V = AnalyzedSignature -> Maybe Vertex
+type Node = (AnalyzedTranslation, AnalyzedSignature, [AnalyzedSignature])
+type V2N  = Vertex -> Node
+type K2V  = AnalyzedSignature -> Maybe Vertex
 
 removeUnused :: Err.ErrorM m => AnalyzedAST -> m AnalyzedAST
 removeUnused ast = do
@@ -55,7 +52,7 @@ findCalls ast expr
 
   | otherwise = return []
   where
-    is prism = has prism expr
+    is p = has p expr
 
 
 isUsed :: (Graph, V2N, K2V) -> AnalyzedTranslation -> Bool

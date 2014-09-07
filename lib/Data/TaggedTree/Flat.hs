@@ -5,7 +5,6 @@ import Control.Lens
 import Data.Function
 import Data.Functor
 import Data.List (partition, groupBy)
-import Data.Maybe
 import Data.Monoid
 
 import qualified Data.Map.Strict as Map
@@ -46,8 +45,7 @@ rebuild ns =
 
     subtreeMap :: (Ord tag, Cons' s tag) => [(s, [a])] -> [(tag, TaggedTree tag a)]
     subtreeMap = map (_2 %~ rebuild)
-               . map unsafeExtractHead
-               . groupBy ((==) `on` unsafeHead . fst)
+               . groupByFstHead
 
 
 flattenOverloads :: [(s, [a])] -> [(s, a)]
@@ -55,21 +53,31 @@ flattenOverloads = concatMap (\(s,as) -> (,) s <$> as)
 
 
 groupOverloads :: Eq s => [(s, a)] -> [(s, [a])]
-groupOverloads = map unsafeExtractFst
-               . groupBy ((==) `on` fst)
+groupOverloads = groupByFst
 
 
 flatOverloads :: Eq s => Iso' [(s, [a])] [(s, a)]
 flatOverloads = iso flattenOverloads groupOverloads
 
 
-unsafeExtractFst :: [(tag, a)] -> (tag, [a])
-unsafeExtractFst lfs = lfs & traverse %%~ _1 %~ First . Just
-                           & _1 %~ fromJust . getFirst
+groupByFst :: Eq a => [(a, b)] -> [(a, [b])]
+groupByFst =
+    map unsafeExtractFst . groupBy ((==) `on` fst)
 
-unsafeExtractHead :: Cons' s tag => [(s,a)] -> (tag, [(s, a)])
-unsafeExtractHead sts = sts & traverse._1 %%~ over _1 (First . Just) . unsafeUncons
-                            & _1 %~ fromJust . getFirst
+groupByFstHead :: (Eq a, Cons' s a) => [(s, b)] -> [(a, [(s, b)])]
+groupByFstHead =
+    map unsafeExtractHead . groupBy ((==) `on` unsafeHead . fst)
+
+
+unsafeExtractFst :: [(tag, a)] -> (tag, [a])
+unsafeExtractFst [] = error "unsafeExtractFst: empty list"
+unsafeExtractFst lfs@((tag,_):_) =
+    (tag, map snd lfs)
+
+unsafeExtractHead :: Cons' s tag => [(s,a)] -> (tag, [(s,a)])
+unsafeExtractHead [] = error "unsafeExtractHead: empty list"
+unsafeExtractHead sts@((s,_):_) =
+    (unsafeHead s, map (_1 %~ unsafeTail) sts)
 
 isSingleElement :: Cons' s tag => s -> Bool
 isSingleElement = hasn't (_tail._head)

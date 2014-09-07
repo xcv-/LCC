@@ -13,8 +13,8 @@ import Language.LCC.AST.Signature
 
 
 data Translation path ret =
-    Translation { _trSig         :: Signature AbsolutePath ret
-                , _trImpl        :: Expr path
+    Translation { _trSig         :: (Signature AbsolutePath ret)
+                , _trImpl        :: (Expr path)
                 , _trAnnotations :: [Annotation]
                 , _trSourcePos   :: SourcePos
                 }
@@ -34,6 +34,9 @@ isBuiltinTr = any isBuiltin . view trAnnotations
 
 isPrivateTr :: Translation path ret -> Bool
 isPrivateTr = any isPrivate . view trAnnotations
+
+isPublicTr :: Translation path ret -> Bool
+isPublicTr = not . isPrivateTr
 
 
 trParamTypes :: Traversal' (Translation path ret) Type

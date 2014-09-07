@@ -1,8 +1,8 @@
 module Language.LCC.Lexer
   ( whiteSpace
-  , lexeme
   , symbol
   , reserved
+  , lexeme
   , angles
   , parens
   , braces
@@ -23,10 +23,9 @@ module Language.LCC.Lexer
 
 
 import Data.Functor
-import Control.Applicative hiding ((<|>), many)
 import Control.Monad.Identity (Identity)
 
-import Text.Parsec.Text ()
+import Text.Parsec.Text (Parser)
 
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Token as Tok
@@ -97,28 +96,57 @@ lccDef = Tok.LanguageDef
   , Tok.caseSensitive = True
   }
 
+lc ::  Tok.GenTokenParser T.Text () Identity
 lc = Tok.makeTokenParser lccDef
 
-whiteSpace     = Tok.whiteSpace    lc
-lexeme         = Tok.lexeme        lc
-symbol         = Tok.symbol        lc
-reserved       = Tok.reserved      lc
-angles         = Tok.angles        lc
-parens         = Tok.parens        lc
-braces         = Tok.braces        lc
-brackets       = Tok.brackets      lc
-dot            = Tok.dot           lc
-colon          = Tok.colon         lc
-comma          = Tok.comma         lc
-commaSep       = Tok.commaSep      lc
-commaSep1      = Tok.commaSep1     lc
 
-identifier     = Tok.identifier    lc
-intLiteral     = Tok.integer       lc
-floatLiteral   = Tok.float         lc
-charLiteral    = Tok.charLiteral   lc
-stringLiteral  = Tok.stringLiteral lc
+whiteSpace :: Parser ()
+whiteSpace = Tok.whiteSpace lc
 
-boolLiteral    = (True  <$ symbol "true")
-           P.<|> (False <$ symbol "false")
-           P.<?> "boolean literal"
+symbol :: String -> Parser String
+symbol = Tok.symbol lc
+
+reserved :: String -> Parser ()
+reserved = Tok.reserved lc
+
+lexeme, angles, parens, braces, brackets :: Parser a -> Parser a
+lexeme   = Tok.lexeme   lc
+angles   = Tok.angles   lc
+parens   = Tok.parens   lc
+braces   = Tok.braces   lc
+brackets = Tok.brackets lc
+
+dot, colon, comma :: Parser String
+dot   = Tok.dot   lc
+colon = Tok.colon lc
+comma = Tok.comma lc
+
+commaSep, commaSep1 :: Parser a -> Parser [a]
+commaSep  = Tok.commaSep  lc
+commaSep1 = Tok.commaSep1 lc
+
+
+{-
+identifier, intLiteral, floatLiteral, charLiteral, stringLiteral
+  :: Tok.GenTokenParser () Identity
+  -}
+
+identifier :: Parser String
+identifier = Tok.identifier lc
+
+intLiteral :: Parser Integer
+intLiteral = Tok.integer lc
+
+floatLiteral :: Parser Double
+floatLiteral = Tok.float lc
+
+charLiteral :: Parser Char
+charLiteral = Tok.charLiteral lc
+
+stringLiteral :: Parser String
+stringLiteral = Tok.stringLiteral lc
+
+boolLiteral :: Parser Bool
+boolLiteral = (True  <$ symbol "true")
+        P.<|> (False <$ symbol "false")
+        P.<?> "boolean literal"

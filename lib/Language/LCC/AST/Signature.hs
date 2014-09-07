@@ -53,7 +53,7 @@ instance Show Param where
 
 
 data Signature path ret = Signature
-                          { _sigPath :: path
+                          { _sigPath   :: path
                           , _sigParams :: [Param]
                           , _sigReturn :: ret
                           }

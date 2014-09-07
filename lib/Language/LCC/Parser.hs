@@ -9,15 +9,13 @@ module Language.LCC.Parser
   ) where
 
 import Control.Applicative hiding ((<|>), many)
-import Control.Lens (traverse, _1, _2)
+import Control.Lens (traverse, _2)
 import Control.Lens.Operators
 import Control.Monad
 import Control.Monad.Except
 
-import Data.Char
 import Data.Function (on)
-import Data.List (nub, groupBy, sortBy)
-import Data.Maybe
+import Data.List (nub, sortBy)
 import Data.Monoid
 import qualified Data.Map as Map
 import qualified Data.Sequence as Seq
@@ -31,7 +29,6 @@ import qualified Language.LCC.Error as Err
 import qualified Language.LCC.Lexer as Lex
 
 
-
 parseLocale :: Err.ErrorM m => String -> Text.Text -> m RawLocale
 parseLocale filename fileContents =
     case parse localeParser filename fileContents of
@@ -39,38 +36,47 @@ parseLocale filename fileContents =
       Left e  -> throwError $ Err.Parse e
 
 localeParser :: Parser RawLocale
-localeParser =
-    Lex.whiteSpace *>
-      (Locale <$> (Lex.reserved "locale" *> Lex.identifier)
-              <*> (Lex.colon *> subtreeParser mempty []))
-        <* eof
+localeParser = do
+    Lex.whiteSpace
+    Lex.reserved "locale"
+
+    name <- Lex.identifier
+    Lex.colon
+
+    ast <- subtreeParser mempty []
+
+    return (Locale name ast)
 
 
 nodeParser :: AbsolutePath -> [Annotation] -> Parser (PathNode, RawAST)
 nodeParser path anns = do
-    name <- Lex.identifier
+    name  <- Lex.identifier
     anns' <- annotationsParser anns
+
     Lex.colon
     content <- contentParser (path |> name) anns'
 
     return (name, content)
   where
     contentParser :: AbsolutePath -> [Annotation] -> Parser RawAST
-    contentParser path anns = Lex.braces (subtreeParser path anns)
-                          <|> Leaf . (:[]) <$> translationParser path anns
-                          <?> "translation definition or subgroup"
+    contentParser path' anns' = Lex.braces (subtreeParser path' anns')
+                            <|> Leaf . pure <$> translationParser path' anns'
+                            <?> "translation definition or subgroup"
 
 
 subtreeParser :: AbsolutePath -> [Annotation] -> Parser RawAST
-subtreeParser path anns =
-    Subtree <$> (buildMap =<< many (nodeParser path anns))
-            <?> "list of translation definitions or subgroups"
+subtreeParser path anns = do
+    nodes <- many (nodeParser path anns)
+         <?> "list of translation definitions or subgroups"
+
+    m <- buildMap nodes
+
+    return (Subtree m)
   where
     buildMap :: [(PathNode, RawAST)] -> Parser (Map.Map PathNode RawAST)
     buildMap = liftM Map.fromList
              . (traverse._2 %%~ joinLeafs)
-             . map unsafeExtractFst
-             . groupBy ((==)`on`fst)
+             . groupByFst
              . sortBy (compare`on`fst)
 
     joinLeafs :: [RawAST] -> Parser RawAST
@@ -134,7 +140,7 @@ parseString :: String -> Parser RawExpr
 parseString str =
     case parse stringParser str (Text.pack str) of
         Right result -> return $ SConcat result
-        Left err     -> unexpected "String parse error"
+        Left  _      -> unexpected "String parse error"
 
 stringParser :: Parser [RawExpr]
 stringParser = many stringChunksParser <* eof

@@ -4,10 +4,6 @@ module Language.LCC.AST.AST where
 
 import qualified Data.Map.Strict as Map
 
-import qualified Text.Parsec.Pos as Parsec
-
-import Language.LCC.AST.Annotation
-import Language.LCC.AST.Expr
 import Language.LCC.AST.Path
 import Language.LCC.AST.Signature
 import Language.LCC.AST.Translation

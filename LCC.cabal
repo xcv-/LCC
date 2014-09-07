@@ -35,7 +35,7 @@ library
                        Language.LCC.AST.Scope
                        Language.LCC.AST.Signature
                        Language.LCC.AST.Translation
-  ghc-options:         -O2
+  ghc-options:         -O0 -Wall -fno-warn-orphans -fno-warn-unused-do-bind
   hs-source-dirs:      lib
   build-depends:       base (>= 4.3 && < 5), containers == 0.5.*, dlist >= 0.7,
                        text >= 0.11, text-format >= 0.3, wl-pprint-text >= 1,

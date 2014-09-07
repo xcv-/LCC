@@ -3,18 +3,14 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Language.LCC.Simplifier.Inline where
 
-import Control.Applicative
 import Control.Lens
 import Control.Monad (liftM, liftM3)
-import Control.Monad.Trans (lift)
-import Control.Monad.Reader (MonadReader, ReaderT, runReaderT, asks, local)
+import Control.Monad.Reader (MonadReader, runReaderT, asks, local)
 
 import Data.List (find)
 import Data.Maybe
-import qualified Data.Map as Map
 
 import Language.LCC.AST
-import Language.LCC.Pretty
 import Language.LCC.Target
 import Language.LCC.TypeChecker
 import qualified Language.LCC.Error as Err
@@ -58,9 +54,10 @@ inlineExpr expr
         Builtin sig          -> inlineBuiltin t sig inlinedArgs
         Fn (VAbsolutePath p) -> inlineFuncall (p^.from absolute) inlinedArgs
         Fn (VParamName name) -> fromMaybe expr `liftM` findBoundParam name
+
   | otherwise   = return expr
   where
-    is prism = has prism expr
+    is p = has p expr
 
     concatLits :: AbsExpr -> AbsExpr
     concatLits (SConcat [s]) = concatLits s
@@ -70,7 +67,7 @@ inlineExpr expr
         (StringL s', StringL ss') -> StringL $ s' ++ ss'
         (SConcat s', SConcat ss') -> SConcat $ s' ++ ss'
         (s', ss')                 -> SConcat [s',ss']
-    concatLits expr = expr
+    concatLits expr' = expr'
 
 
 findBoundParam :: InliningEnv t m => String -> m (Maybe AbsExpr)

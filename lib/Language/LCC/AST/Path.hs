@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -9,7 +10,6 @@ module Language.LCC.AST.Path where
 
 import GHC.Exts (IsList(..))
 
-import Control.Applicative
 import Control.Lens
 
 import qualified Data.Foldable as Foldable
@@ -43,7 +43,7 @@ data AbsoluteVarPath = VAbsolutePath (Seq PathNode)
 
 
 (|>~) :: Snoc sn sn a a => Setting (->) s t sn sn -> a -> s -> t
-lens |>~ a = lens %~ (|> a)
+l |>~ a = l %~ (|> a)
 
 
 
@@ -61,6 +61,7 @@ instance IsList AbsolutePath where
     fromList = view (from absolute) . fromList
 
 
+defaultShow :: Seq PathNode -> String
 defaultShow = mconcat . intersperse "." . toList
 
 instance Show RelativePath where

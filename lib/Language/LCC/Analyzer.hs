@@ -5,51 +5,25 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Language.LCC.Analyzer where
 
-import Prelude hiding (mapM, mapM_, forM_, foldlM, foldrM, sequence)
+import Prelude hiding (mapM, mapM_, sequence)
 
 import Control.Applicative
 import Control.Arrow (first, second)
 import Control.Lens
 import Control.Monad (liftM, liftM2, when, unless)
-import Control.Monad.State.Strict (MonadState, StateT, execStateT,
-                                   get, gets, modify)
+import Control.Monad.State.Strict (MonadState, execStateT, gets, modify)
 
 import Data.Foldable
 import Data.Maybe
-import Data.Monoid
 import Data.Sequence (ViewL(..), ViewR(..))
-import Data.Traversable
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Sequence as Seq
 
 import Language.LCC.AST
-import Language.LCC.Parser
 import Language.LCC.Target
 import Language.LCC.TypeChecker
 import qualified Language.LCC.Error as Err
-
-{-
-checkInterfaces :: [(Locale, LocaleState)]
-                -> Either LocaleError [(Locale, LocaleState)]
-checkInterfaces [] = Right []
-checkInterfaces states =
-    zipWithM applyCheck states (tail $ cycle states)
-  where
-    applyCheck (lc1, st1) (lc2, st2) =
-        case checkInterface st1 st2 of
-          ([],[]) -> Right (lc1, st1)
-          ([],missing) -> Left $ LocaleInterfaceError (lcName lc2) missing
-          (missing, _) -> Left $ LocaleInterfaceError (lcName lc1) missing
-
-checkInterface :: LocaleState -> LocaleState
-               -> ([TranslationSignature], [TranslationSignature])
-checkInterface st1 st2 =
-    (sigs2 \\ sigs1, sigs1 \\ sigs2)
-  where
-    sigs1 = Set.toList $ envSignatures $ lcsEnv st1
-    sigs2 = Set.toList $ envSignatures $ lcsEnv st2
-    -}
 
 
 analyze :: (Applicative m, Err.ErrorM m, Target t)
@@ -79,10 +53,10 @@ toAbsolute = localeAST.traverse %%~ (./> trImpl.traverse %%~ toAbsPath)
               => RelativeVarPath -> m AbsoluteVarPath
     toAbsPath (RVAbsolutePath path) = return $ VAbsolutePath path
     toAbsPath (RVParamName name)    = return $ VParamName name
-    toAbsPath rp@(RVRelativePath path) = do
+    toAbsPath rp@(RVRelativePath relP) = do
         relTo <- viewS $ trSig.sigPath.absolute
 
-        liftM VAbsolutePath (toAbsPath' relTo path)
+        liftM VAbsolutePath (toAbsPath' relTo relP)
       where
         toAbsPath' :: (Err.ErrorM m, Scoped path ret m, Show path, Show ret)
                    => Seq.Seq PathNode -> Seq.Seq PathNode -> m (Seq.Seq PathNode)
@@ -93,9 +67,9 @@ toAbsolute = localeAST.traverse %%~ (./> trImpl.traverse %%~ toAbsPath)
 
             "^" :< pathTail ->
               case Seq.viewr relTo of
-                Seq.EmptyR           -> Err.invalidRelativePath rp
+                Seq.EmptyR     -> Err.invalidRelativePath rp
 
-                relToInit:>relToLast -> toAbsPath' relToInit pathTail
+                relToInit :> _ -> toAbsPath' relToInit pathTail
 
             down :< pathTail -> toAbsPath' (relTo|>down) pathTail
 
@@ -126,12 +100,13 @@ type InferIterData = (FlatAbsASTMap Type, [AbsTranslation UnknownType])
 
 inferReturnTypes :: Err.ErrorM m => AbsLocale UnknownType -> m AnalyzedLocale
 inferReturnTypes l =
-    findResult . iterate (>>=iter) . prepare $ l
+    findResult $ iterate (>>=iter) prepared
   where
-    prepare :: Monad m => AbsLocale UnknownType -> m InferIterData
-    prepare l = return (Map.empty,  l^..localeAST.traverse)
+    prepared :: Monad m => m InferIterData
+    prepared = return (Map.empty,  l^..localeAST.traverse)
 
     findResult :: Monad m => [m InferIterData] -> m AnalyzedLocale
+    findResult []       = error "Analyzer: findResult: empty list"
     findResult (mx:mxs) = mx >>= \case
         (known, []) -> return $ localeAST .~ rebuild (Map.toList known) $ l
         _           -> findResult mxs
@@ -140,7 +115,6 @@ inferReturnTypes l =
     iter (known, unknown) = do
        (known', unknown') <- execStateT (revForM_ unknown inferPass)
                                         (known, [])
-
        if length unknown == length unknown'
          then Err.cycle unknown'
          else return (known', unknown')
@@ -149,8 +123,8 @@ inferReturnTypes l =
               => AbsTranslation UnknownType
               -> m ()
     inferPass t = do
-        exprType <- exprType'
-        retType <- t ./> exprType . view trImpl
+        exprType' <- mexprType
+        retType   <- t ./> exprType' . view trImpl
 
         modify $
           case retType of
@@ -163,23 +137,23 @@ inferReturnTypes l =
     revForM_ :: Monad m => [a] -> (a -> m b) -> m ()
     revForM_ xs f = foldrM (\x () -> f x >> return ()) () xs
 
-    exprType' :: ( MonadState InferIterData st
+    mexprType :: ( MonadState InferIterData st
                  , Err.ErrorM m
                  , ScopedAbs UnknownType m
                  )
               => st (AbsExpr -> m (Maybe Type))
-    exprType' = liftM2 exprType folder' getSigReturn'
+    mexprType = liftM2 exprType mfolder mgetSigReturn
 
-    folder' :: ( MonadState InferIterData st
+    mfolder :: ( MonadState InferIterData st
                , Err.ErrorM m
                , ScopedAbs UnknownType m
                )
             => st (TypeFolder m)
-    folder' = liftM foldInferNothrow getSigReturn'
+    mfolder = liftM foldInferNothrow mgetSigReturn
 
-    getSigReturn' :: (MonadState InferIterData st , ScopedAbs UnknownType m)
+    mgetSigReturn :: (MonadState InferIterData st , ScopedAbs UnknownType m)
                   => st (SigReturnGetter m)
-    getSigReturn' = liftM (mkSigReturnGetter . mapLookup) $ gets fst
+    mgetSigReturn = liftM (mkSigReturnGetter . mapLookup) $ gets fst
 
 
 

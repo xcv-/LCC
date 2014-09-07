@@ -11,7 +11,7 @@ myApplication: {
 
     subGroupsCanBeNested: {
         deeperTranslation[private]: "Más texto"
-        referencingOthers: (int x) -> "Aquí llamo a otra traducción: ${^.^.myParameterizedTranslation(false)}"
+        referencingOthers: (int y) -> "Aquí llamo a otra traducción: ${^.^.myParameterizedTranslation(false)}"
     }
 
     moreReferences: "subGroupsCanBeNested.deeperTranslation: \
