@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -10,13 +11,13 @@ module Language.LCC.Targets.Java where
 import GHC.Exts (IsList(..))
 
 import Control.Lens hiding ((??))
-import Control.Monad (when, zipWithM)
-import Control.Monad (liftM, liftM3, forM_)
-import Control.Monad.Reader (MonadReader, runReaderT, asks)
-import Control.Monad.Writer (MonadWriter, execWriterT)
+import Control.Monad (liftM, liftM3, when, zipWithM_)
+import Control.Monad.Reader (MonadReader, runReaderT, ask, asks)
+import Control.Monad.Writer (MonadWriter, runWriterT, execWriterT, tell)
 import Control.Monad.State (MonadState, evalStateT, execStateT, get, put, modify)
 
 import Data.Char (toLower, toUpper)
+import Data.Foldable (forM_)
 import Data.Function
 import Data.Functor
 import Data.List
@@ -256,7 +257,7 @@ sigFmtArgs name t = (access, ret, name, argList)
 
 fmtBuiltin :: (Err.ErrorM m, ScopedAbs Type m)
            => AnalyzedAST -> AnalyzedSignature -> [AbsExpr] -> m T.Text
-fmtBuiltin ast sig args = do
+fmtBuiltin ast sig args =
     case builtins^?ix sig of
       Just (sig', subsFn) -> do
         let _ = sig' `asTypeOf` sig
@@ -352,23 +353,23 @@ checkInterfaceConsistency ls
     pairs xs = scanl (\(_,b) c -> (b, c)) (xs!!0, xs!!1) (drop 2 xs)
 
 
-writeConstArrays :: Writing m => [Type] -> m ()
-writeConstArrays types =
+writeConstArrayDecls :: Writing m => [Type] -> m ()
+writeConstArrayDecls types =
     forM_ types $ \t ->
       writefn "private final {}[] {};" (javaType t, constArrayName t)
 
 
 writeInterfaceConstructor :: Writing m => [Type] -> [T.Text] -> m ()
 writeInterfaceConstructor types names = do
-    writef1 "private {}" =<< asks javaInterfaceName
+    writef1 "private {}(" =<< asks javaInterfaceName
 
     let firstType = head types
 
     indent . indent $ do
-      zipWithM (\t name -> do
-                  let sep = if t == firstType then '(' else ','
+      zipWithM_ (\t name -> do
+                   let sep = if t == firstType then ' ' else ','
 
-                  writefn "{} {}[] {}" (sep, javaType t, name))
+                   writefn "{} {}[] {}" (sep, javaType t, name))
         types names
 
       writeln ") {"
@@ -395,7 +396,7 @@ nextConstArrayIndex typ = do
 collectConstArrayTypes :: AnalyzedAST -> [Type]
 collectConstArrayTypes ast =
     sort $ nub [ sig^.sigReturn | tr <- ast^..traverse, let sig = tr^.trSig
-               , sig^.sigParams == [] && isPublicTr tr ]
+               , null (sig^.sigParams) && isPublicTr tr ]
 
 
 writeInterfaceBody :: (Err.ErrorM m, Writing m) => AnalyzedAST -> m ()
@@ -405,96 +406,169 @@ writeInterfaceBody filteredAst =
         Err.globalPanic $ "writeInterfaceBody: Translations at the top level: "
                             ++ show (trs^..traverse.trSig)
       Subtree m ->
-        evalStateT (mapWithTagsM_ m writeSignature writeNestedClass) Map.empty
+        evalStateT (foldMapWithTagsM m writeSignature writeNestedClass)
+                   Map.empty
+          >> return ()
   where
     writeSignature :: (Writing m, ConstArrayCountM m)
-                   => PathNode -> AnalyzedTranslation -> m ()
-    writeSignature name t =
-        case t^.trSig.sigParams of
-          [] ->
-            when (isPublicTr t) $ do
-              i <- nextConstArrayIndex $ t^.trSig.sigReturn
-              writefn "{} final {} {} = {}[{}];" (varSigFmtArgs name t i)
-              writeln ""
+                   => PathNode -> AnalyzedTranslation -> m Any
+    writeSignature name t
+      | null $ t^.trSig.sigParams = do
+          i <- nextConstArrayIndex $ t^.trSig.sigReturn
+          writefn "{} final {} {} = {}[{}];" (varSigFmtArgs name t i)
+          writeln ""
+          return (Any False)
 
-          _ -> do
-            writefn "{} abstract {} {}({});" (sigFmtArgs name t)
-            writeln ""
+      | otherwise = do
+          writefn "{} abstract {} {}({});" (sigFmtArgs name t)
+          writeln ""
+          return (Any True)
 
     writeNestedClass :: (Writing m, ConstArrayCountM m)
-                     => PathNode -> Map.Map PathNode AnalyzedAST -> m ()
+                     => PathNode -> Map.Map PathNode AnalyzedAST -> m Any
     writeNestedClass name m = do
-        writef1 "public abstract class _Abstract_{} {" name
+        writef1 "public abstract class {} {" name
 
-        indent $
-          mapWithTagsM_ m writeSignature writeNestedClass
+        hasAbstractMembers <-
+          indent $ foldMapWithTagsM m writeSignature writeNestedClass
 
         writeln "}"
 
-        writefn "protected abstract _Abstract_{} _new_{}();" (name, name)
+        new <-
+          if getAny hasAbstractMembers
+            then do
+              writefn "protected abstract {} _new_{}();" (name, name)
 
-        writefn "public final _Abstract_{} {} = _new_{}();" (name, name, name)
+              return $ format1 "_new_{}()" name
+
+            else
+              return $ format "new {}() {}" (name, "{}" :: T.Text)
+
+        writefn "public final {} {} = {};" (name, name, new)
         writeln ""
 
+        return hasAbstractMembers
 
 
 
-type ConstArray = Map.Map Type (DL.DList T.Text)
-type ConstArrayCollectM = MonadState ConstArray
 
-writeImplementation :: (Err.ErrorM m, Writing m) => AnalyzedAST -> m ConstArray
-writeImplementation ast =
+type ConstArrayValues = Map.Map Type (DL.DList (AbsolutePath, T.Text))
+type ConstArrayCollectM = MonadState ConstArrayValues
+
+
+collectConstArrayValues :: Err.ErrorM m => AnalyzedAST -> m ConstArrayValues
+collectConstArrayValues ast =
+    flip execStateT Map.empty $
+      forM_ ast $ \t -> do
+        let sig = t^.trSig
+
+        when (sig^.sigParams.to null && isPublicTr t) $ do
+          impl <- t ./> fmtExpr ast . view trImpl
+
+          store (sig^.sigReturn) (sig^.sigPath) impl
+  where
+    store :: ConstArrayCollectM m => Type -> AbsolutePath -> T.Text -> m ()
+    store ty path impl =
+      modify $ at ty %~ Just . \case
+        Just vals -> DL.snoc vals (path, impl)
+        Nothing   -> DL.singleton (path, impl)
+
+
+writeImplementations :: (Err.ErrorM m, Writing m) => AnalyzedAST -> m ()
+writeImplementations ast =
     case ast of
       Leaf trs ->
-        Err.globalPanic $ "writeImplementation: Translation at the top level: "
+        Err.globalPanic $ "writeImplementations: Translation at the top level: "
                             ++ show (trs^..traverse.trSig)
-      Subtree m ->
-        execStateT (mapWithTagsM_ m writeMethod writeNestedClass) Map.empty
+      Subtree m -> do
+        foldMapWithTagsM m writeMethod writeNestedClass
+        return ()
   where
-    writeMethod :: (Err.ErrorM m, Writing m, ConstArrayCollectM m)
-                => PathNode -> AnalyzedTranslation -> m ()
-    writeMethod name t =
-        case t^.trSig.sigParams of
-          [] -> do
-            let ret = t^.trSig.sigReturn
+    writeMethod :: (Err.ErrorM m, Writing m)
+                => PathNode -> AnalyzedTranslation -> m Any
+    writeMethod name t
+      | null $ t^.trSig.sigParams =
+          return (Any False)
 
-            when (isPublicTr t) $
-              storeConstArrayItem ret =<< (t ./> fmtExpr ast . view trImpl)
+      | otherwise = do
+          writeln "@Override"
+          writefn "{} final {} {}({}) {" (sigFmtArgs name t)
 
-          _ -> do
-            writeln "@Override"
-            writefn "{} final {} {}({}) {" (sigFmtArgs name t)
-            indent $ writef1 "return {};" =<< (t ./> fmtExpr ast . view trImpl)
-            writeln "}"
-            writeln ""
+          indent $
+            writef1 "return {};" =<< (t ./> fmtExpr ast . view trImpl)
 
-    writeNestedClass :: (Err.ErrorM m, Writing m, ConstArrayCollectM m)
-                     => PathNode -> Map.Map PathNode AnalyzedAST -> m ()
+          writeln "}"
+          writeln ""
+
+          return (Any True)
+
+    writeNestedClass :: (Err.ErrorM m, Writing m)
+                     => PathNode -> Map.Map PathNode AnalyzedAST -> m Any
     writeNestedClass name m = do
-        writeln "@Override"
-        writefn "protected final _Abstract_{} _new_{}() {" (name, name)
+        let write :: (Err.ErrorM m, Writing m) => m Any
+            write = do
+              writeln "@Override"
+              writefn "protected final {} _new_{}() {" (name, name)
 
-        indent $ do
-          writef1 "return new _Abstract_{}() {" name
-          indent $ mapWithTagsM_ m writeMethod writeNestedClass
-          writeln "};"
+              indent $
+                writef1 "return new {}() {" name
 
-        writeln "}"
-        writeln ""
+              hasOverrides <-
+                indent.indent $
+                  foldMapWithTagsM m writeMethod writeNestedClass
 
-    storeConstArrayItem :: ConstArrayCollectM m => Type -> T.Text -> m ()
-    storeConstArrayItem ty impl = modify $ at ty %~ \case
-        Just impls -> Just $ DL.snoc impls impl
-        Nothing    -> Just $ DL.singleton impl
+              indent $
+                writeln "};"
+
+              writeln "}"
+              writeln ""
+
+              return hasOverrides
+
+        cfg <- ask
+        case runReaderT (runWriterT write) cfg of
+          Right (Any hasOverrides, w)
+            | hasOverrides -> tell w >> return (Any True)
+            | otherwise    -> return (Any False)
+
+          Left e -> Err.rethrow e
+
+
+
+writeConstArrayValues :: Writing m => ConstArrayValues -> m ()
+writeConstArrayValues arrays = do
+    let firstType = fst $ Map.findMin arrays
+
+    iforM_ arrays $ \ty values -> do
+      let sep = if ty == firstType then ' ' else ','
+
+      writefn "{} new {}[] {" (sep, javaType ty)
+
+      indent $
+        forM_ values $ \(path, impl) -> do
+          writef1 "/* {} */" (show path)
+          writef1 "{},"      impl
+
+      writeln "}"
 
 
 writeInstantiation :: (Err.ErrorM m, Writing m) => AnalyzedLocale -> m ()
 writeInstantiation l = do
     className <- asks javaInterfaceName
-    let name = l^.localeName
 
-    writefn "public final {} {} = new {}() {" (className, name, className)
-    indent $ writeImplementation (l^.localeAST)
+    let (name, ast) = (l^.localeName, l^.localeAST)
+
+    writefn "public final {} {} = new {}(" (className, name, className)
+
+
+    indent.indent $ do
+      writeConstArrayValues =<< collectConstArrayValues ast
+
+      writeln ") {"
+
+    indent $
+      writeImplementations ast
+
     writeln "};"
 
 
@@ -520,7 +594,7 @@ writeLocales ls = do
       let constArrayTypes = collectConstArrayTypes sampleAST
       let constArrayNames = map constArrayName constArrayTypes
 
-      writeConstArrays constArrayTypes
+      writeConstArrayDecls constArrayTypes
       writeln ""
 
       writeInterfaceConstructor constArrayTypes constArrayNames

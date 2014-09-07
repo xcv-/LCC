@@ -12,7 +12,9 @@ import GHC.Exts (IsList, Item, toList)
 
 import Control.Applicative
 import Control.Lens
+import Control.Monad (liftM2)
 
+import Data.Monoid
 import Data.Foldable hiding (toList, for_)
 import Data.Traversable
 
@@ -82,16 +84,43 @@ filterTree p tree =
     isEmpty _           = False
 
 
+foldMapWithTags :: (Ord tag, Monoid acc)
+                => Map.Map tag (TaggedTree tag a)
+                -> (tag -> a -> acc)
+                -> (tag -> Map.Map tag (TaggedTree tag a) -> acc)
+                -> acc
+foldMapWithTags m fLeaf fSubtree =
+    Map.foldMapWithKey f m
+  where
+    f tag (Leaf as)    = foldMap (fLeaf tag) as
+    f tag (Subtree m') = fSubtree tag m'
+
+
+newtype MMonoid m n = MMonoid { unwrap :: m n }
+
+instance (Monad m, Monoid n) => Monoid (MMonoid m n) where
+  mempty      = MMonoid $ return mempty
+  mappend a b = MMonoid $ liftM2 mappend (unwrap a) (unwrap b)
+
+
+foldMapWithTagsM :: (Monad m, Ord tag, Monoid acc)
+                 => Map.Map tag (TaggedTree tag a)
+                 -> (tag -> a -> m acc)
+                 -> (tag -> Map.Map tag (TaggedTree tag a) -> m acc)
+                 -> m acc
+foldMapWithTagsM m fLeaf fSubtree =
+    unwrap $
+      foldMapWithTags m (\tag -> MMonoid . fLeaf tag)
+                        (\tag -> MMonoid . fSubtree tag)
+
+
 mapWithTagsM_ :: (Monad m, Ord tag)
               => Map.Map tag (TaggedTree tag a)
               -> (tag -> a -> m b)
               -> (tag -> Map.Map tag (TaggedTree tag a) -> m c)
               -> m ()
-mapWithTagsM_ m fLeaf fSubtree = do
-    let for_ f = Map.foldlWithKey' f (return ()) m
-
-    for_ $ \acc tag subtree ->
-      acc >>
+mapWithTagsM_ m fLeaf fSubtree =
+    iforM_ m $ \tag subtree ->
       case subtree of
         Leaf as    -> mapM_ (fLeaf tag) as
         Subtree m' -> fSubtree tag m' >> return ()

@@ -168,6 +168,9 @@ showArgTypes = intercalate ", " . map (maybe "?" show)
 
 -- Helpers
 
+rethrow :: ErrorM m => Error -> m a
+rethrow = ME.throwError
+
 catching :: ErrorM m => m a -> (Error -> m a) -> m a
 catching = ME.catchError
 

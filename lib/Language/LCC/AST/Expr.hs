@@ -14,6 +14,7 @@ import Language.LCC.AST.Signature
 
 data FuncallPath path
     = Builtin AnalyzedSignature
+    | Input PathNode
     | Fn path
     deriving (Eq, Ord, Show)
 

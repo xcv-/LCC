@@ -6,6 +6,7 @@ import Control.Lens
 
 import Data.List
 import Data.Maybe
+import Data.Monoid ((<>))
 
 import Language.LCC.AST.Path
 
@@ -34,7 +35,7 @@ instance Show Type where
   show TBool      = "bool"
   show TChar      = "char"
   show TString    = "string"
-  show (TArray t) = "[" ++ show t ++ "]"
+  show (TArray t) = show t ++ "[]"
 
 
 
@@ -57,7 +58,6 @@ data Signature path ret = Signature
                           , _sigParams :: [Param]
                           , _sigReturn :: ret
                           }
-    deriving (Eq, Ord)
 
 makeLenses ''Signature
 
@@ -67,6 +67,16 @@ type AbsSignature ret  = Signature AbsolutePath ret
 type RawSignature      = Signature RelativePath UnknownType
 type AnalyzedSignature = Signature AbsolutePath Type
 
+
+instance (Eq path, Eq ret) => Eq (Signature path ret) where
+    s1 == s2 = (s1^.sigPath)        == (s2^.sigPath)
+            && (s1^.sigReturn)      == (s2^.sigReturn)
+            && (s1^..sigParamTypes) == (s2^..sigParamTypes)
+
+instance (Ord path, Ord ret) => Ord (Signature path ret) where
+    compare s1 s2 = compare (s1^.sigPath)        (s2^.sigPath)
+                 <> compare (s1^.sigReturn)      (s2^.sigReturn)
+                 <> compare (s1^..sigParamTypes) (s2^..sigParamTypes)
 
 instance (Show path, Show ret) => Show (Signature path ret) where
   show Signature {..} =

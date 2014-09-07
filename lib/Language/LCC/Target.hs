@@ -44,7 +44,7 @@ format1 :: Buildable b => Format -> b -> T.Text
 format1 fmt = format fmt . Only
 
 writeln :: MonadWriter (DL.DList a) m => a -> m ()
-writeln l = tell (pure l)
+writeln = tell . pure
 
 writef1 :: (MonadWriter (DL.DList T.Text) m, Buildable b) => Format -> b -> m ()
 writef1 fmt = writeln . format1 fmt
