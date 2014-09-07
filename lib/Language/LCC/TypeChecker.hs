@@ -9,7 +9,6 @@ import Prelude hiding (mapM, sequence, all)
 import Control.Applicative
 import Control.Lens
 import Control.Monad (join, liftM, liftM2)
-import Control.Monad.Except (catchError)
 
 import Data.Foldable hiding (fold)
 import Data.Traversable
@@ -136,7 +135,8 @@ foldInferNothrow getSigReturn known =
 
     altSkipErrors :: Err.ErrorM m
                   => m (Maybe Type) -> m (Maybe Type) -> m (Maybe Type)
-    altSkipErrors acc t = liftM2 (<|>) acc (t `catchError` \_ -> return Nothing)
+    altSkipErrors acc t =
+      liftM2 (<|>) acc (t `Err.catching` \_ -> return Nothing)
 
 
 foldCheck :: ExprTypeM ret m => SigReturnGetter m -> TypeFolder m
@@ -204,5 +204,5 @@ throwToMaybe throwLookup path paramTypes = do
     let paramTypes' = map (Just . runIdentity) paramTypes
 
     liftM Just (throwLookup path paramTypes')
-      `catchError` \e -> return Nothing
+      `Err.catching` \e -> return Nothing
       -}

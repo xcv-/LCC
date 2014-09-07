@@ -139,29 +139,41 @@ instance Show Error where
           "Could not infer return types:" : map (show . Scope) cyclicSigs
 
   show MissingSignatures {..} =
-    let formatted = missingSigs
-                  & map (\MissingSignature {..} ->
-                          ((missingComparedTo, missingInLocale), missingSig))
-                  & sortBy (compare `on` fst)
-                  & groupByFst
-                  & traverse._2 %~ concatMap ("\n\t"++) . map show
-                  :: [((String, String), String)]
+      let formatted = missingSigs
+                    & map (\MissingSignature {..} ->
+                            ((missingComparedTo, missingInLocale), missingSig))
+                    & sortBy (compare `on` fst)
+                    & groupByFst
+                    & traverse._2 %~ concatMap ("\n\t"++) . map show
+                    :: [((String, String), String)]
 
-        groupHdr = printf "Found in %s, but missing in %s:"
+          groupHdr = printf "Found in %s, but missing in %s:"
 
-    in intercalate "\n" $
-         "Found missing signatures:\n" :
-           map (\((f,l),list) -> groupHdr f l ++ list) formatted
+      in intercalate "\n" $
+           "Found missing signatures:\n" :
+             map (\((f,l),list) -> groupHdr f l ++ list) formatted
 
 
-  show ScopedPanic {..} = printf "In %s: PANIC: %s" (show scope) panicMessage
+  show ScopedPanic {..} =
+      printf "In %s: PANIC: %s" (show scope) panicMessage
 
-  show Panic {..} = printf "PANIC: %s" panicMessage
+  show Panic {..} =
+      printf "PANIC: %s" panicMessage
 
 
 showArgTypes :: [Maybe Type] -> String
 showArgTypes = intercalate ", " . map (maybe "?" show)
 
+
+
+-- Helpers
+
+catching :: ErrorM m => m a -> (Error -> m a) -> m a
+catching = ME.catchError
+
+
+parsingError :: ErrorM m => ParseError -> m a
+parsingError = ME.throwError . Parse
 
 
 invalidRelativePath :: (ErrorM m, Scoped path ret m, Show path, Show ret)

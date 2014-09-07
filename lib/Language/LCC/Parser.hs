@@ -12,7 +12,6 @@ import Control.Applicative hiding ((<|>), many)
 import Control.Lens (traverse, _2)
 import Control.Lens.Operators
 import Control.Monad
-import Control.Monad.Except
 
 import Data.Function (on)
 import Data.List (nub, sortBy)
@@ -33,7 +32,7 @@ parseLocale :: Err.ErrorM m => String -> Text.Text -> m RawLocale
 parseLocale filename fileContents =
     case parse localeParser filename fileContents of
       Right x -> return x
-      Left e  -> throwError $ Err.Parse e
+      Left e  -> Err.parsingError e
 
 localeParser :: Parser RawLocale
 localeParser = do
