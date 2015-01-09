@@ -173,7 +173,7 @@ mkSigReturnGetter lookupPath path paramTypes =
                                   translations
         in return $ case matched of
                       [tr] -> Right $ tr^.trSig.sigReturn
-                      _    -> Left  $ matched
+                      _    -> Left matched
 
 
 maybeToThrow :: ExprTypeM ret m => SigReturnGetter m -> SigReturnGetter m

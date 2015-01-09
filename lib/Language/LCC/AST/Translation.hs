@@ -13,8 +13,8 @@ import Language.LCC.AST.Signature
 
 
 data Translation path ret =
-    Translation { _trSig         :: (Signature AbsolutePath ret)
-                , _trImpl        :: (Expr path)
+    Translation { _trSig         :: Signature AbsolutePath ret
+                , _trImpl        :: Expr path
                 , _trAnnotations :: [Annotation]
                 , _trSourcePos   :: SourcePos
                 }

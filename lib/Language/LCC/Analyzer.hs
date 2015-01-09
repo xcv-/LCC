@@ -37,7 +37,7 @@ resolveImports :: (Applicative m, Err.ErrorM m, Target t)
 resolveImports _ ls = do
     let withImports = [undefined | (_,_,imports) <- ls, not (null imports)]
 
-    when (not $ null withImports) $
+    unless (null withImports) $
       Err.globalPanic "Imports aren't implemented yet"
 
     return [l | (False, l, _) <- ls]
