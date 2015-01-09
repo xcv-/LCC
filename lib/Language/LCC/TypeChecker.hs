@@ -30,7 +30,6 @@ typeOf ast expr =
     fold         = foldInfer getSigReturn
     getSigReturn = maybeToThrow . mkSigReturnGetter . astLookup $ ast
 
-
 calleeSignature :: (Err.ErrorM m, ScopedAbs Type m)
                 => AnalyzedAST
                 -> AbsoluteVarPath
@@ -48,7 +47,6 @@ calleeSignature ast f args =
         tr <- findFunction ast (p^.from absolute) args
         return $ tr^.trSig & sigPath %~ view (absolute . re _Absolute)
 
-
 findFunction :: (Err.ErrorM m, ScopedAbs Type m)
              => AnalyzedAST
              -> AbsolutePath
@@ -63,7 +61,6 @@ findFunction ast f args = do
     case singleMatch $ astLookup ast f of
       Just tr -> return tr
       Nothing -> Err.signatureNotFound (f^.absolute.re _Absolute) argTypes
-
 
 
 type ExprTypeM ret m = (Err.ErrorM m, ScopedAbs ret m, Show ret)
@@ -82,41 +79,34 @@ exprType :: ExprTypeM ret m
          -> SigReturnGetter m
          -> AbsExpr
          -> m (Maybe Type)
-exprType fold getSigReturn expr
-  | is _IntL    = return (Just TInt)
-  | is _DoubleL = return (Just TDouble)
-  | is _BoolL   = return (Just TBool)
-  | is _CharL   = return (Just TChar)
-  | is _StringL = return (Just TString)
-  | is _SConcat =
-      fold (Just TString) (expr^?!_SConcat) >>= \case
-        (Just TString) -> return (Just TString)
-        (Just other)   -> Err.typeError TString other
-        Nothing        -> Err.panic "exprType: fold returned Nothing"
+exprType fold getSigReturn = \case
+    IntL _    -> return (Just TInt)
+    DoubleL _ -> return (Just TDouble)
+    BoolL _   -> return (Just TBool)
+    CharL _   -> return (Just TChar)
+    StringL _ -> return (Just TString)
 
-  | is _Array =
-      (liftM.fmap) TArray $ fold Nothing (expr^?!_Array)
+    SConcat s ->
+      fold (Just TString) s >>= \case
+        Just TString -> return (Just TString)
+        Just other   -> Err.typeError TString other
+        Nothing      -> Err.panic "exprType: fold returned Nothing"
 
-  | is _Cond =
-      let (condition, ifT, ifF) = expr^?!_Cond
+    Array arr ->
+      (liftM.fmap) TArray (fold Nothing arr)
 
-      in fold (Just TBool) [condition]
-      >> fold Nothing [ifT, ifF]
+    Cond cond t f -> do
+      fold (Just TBool) [cond]
+      fold Nothing [t, f]
 
-  | is _Funcall = do
-      let (fn, args) = expr^?!_Funcall
-
+    Funcall fn args ->
       case fn of
         Builtin sig -> return (Just $ sig^.sigReturn)
         Input t _   -> return (Just t)
         Fn fnPath   -> do
           argTypes <- mapM (exprType fold getSigReturn) args
-          (^?_Right) `liftM` getSigReturn fnPath argTypes
-
-  | otherwise = error $ "exprType: unknown Expression: " ++ show expr
-  where
-    is p = has p expr
-
+          retType  <- getSigReturn fnPath argTypes
+          return (retType^?_Right)
 
 
 -- TypeFolders
@@ -126,7 +116,6 @@ foldInfer getSigReturn known =
     foldl' (liftM2 (<|>)) (return known) . map exprType'
   where
     exprType' = exprType (foldInfer getSigReturn) getSigReturn
-
 
 foldInferNothrow :: ExprTypeM ret m => SigReturnGetter m -> TypeFolder m
 foldInferNothrow getSigReturn known =
@@ -138,7 +127,6 @@ foldInferNothrow getSigReturn known =
                   => m (Maybe Type) -> m (Maybe Type) -> m (Maybe Type)
     altSkipErrors acc t =
       liftM2 (<|>) acc (t `Err.catching` \_ -> return Nothing)
-
 
 foldCheck :: ExprTypeM ret m => SigReturnGetter m -> TypeFolder m
 foldCheck getSigReturn expected exprs =
@@ -154,7 +142,6 @@ foldCheck getSigReturn expected exprs =
       | otherwise       = Err.typeError expect found
 
     checkEqual expect found = return (expect <|> found)
-
 
 
 -- SigReturnGetters
@@ -195,15 +182,3 @@ maybeToThrow maybeLookup path paramTypes =
       Left [] -> Err.signatureNotMatched path paramTypes
       Right t -> return (Right t)
       Left ts -> Err.ambiguousOverloads path paramTypes ts
-
-
-{-
-throwToMaybe :: Err.ErrorM m
-             => SigReturnGetter m Identity
-             -> SigReturnGetter m Maybe
-throwToMaybe throwLookup path paramTypes = do
-    let paramTypes' = map (Just . runIdentity) paramTypes
-
-    liftM Just (throwLookup path paramTypes')
-      `Err.catching` \e -> return Nothing
-      -}

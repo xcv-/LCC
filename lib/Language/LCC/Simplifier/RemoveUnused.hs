@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
 module Language.LCC.Simplifier.RemoveUnused where
@@ -9,7 +10,7 @@ import Control.Monad (liftM)
 
 import Data.Foldable
 import Data.Functor
-import Data.Graph
+import Data.Graph (Graph, Vertex, graphFromEdges, transposeG, reachable)
 import Data.Traversable
 
 import Language.LCC.AST
@@ -37,22 +38,16 @@ findCalls :: (Err.ErrorM m, ScopedAbs Type m)
            => AnalyzedAST
            -> AbsExpr
            -> m [AnalyzedSignature]
-findCalls ast expr
-  | is _Array   = liftM concat $ mapM (findCalls ast) (expr^?!_Array)
-  | is _SConcat = liftM concat $ mapM (findCalls ast) (expr^?!_SConcat)
+findCalls ast = \case
+    Array arr  -> liftM concat $ mapM (findCalls ast) arr
+    SConcat s  -> liftM concat $ mapM (findCalls ast) s
+    Cond c t f -> liftM concat $ mapM (findCalls ast) [c,t,f]
 
-  | is _Cond    =
-      let (c,t,f) = expr^?!_Cond
-      in liftM concat $ mapM (findCalls ast) [c,t,f]
-
-  | is (_Funcall._1._Fn._Absolute) =
-      let (f,args) = expr^?!_Funcall
-          absPath  = f^?!_Fn._Absolute.from absolute
+    Funcall (Fn (VAbsolutePath path)) args ->
+      let absPath = path^.from absolute
       in findFunction ast absPath args >>= \tr -> return [tr^.trSig]
 
-  | otherwise = return []
-  where
-    is p = has p expr
+    _ -> return []
 
 
 isUsed :: (Graph, V2N, K2V) -> AnalyzedTranslation -> Bool

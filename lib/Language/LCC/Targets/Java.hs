@@ -218,31 +218,28 @@ fmtInputArg name = "_in_" <> T.pack name
 
 
 fmtExpr :: (Err.ErrorM m, ScopedAbs Type m) => AnalyzedAST -> AbsExpr -> m T.Text
-fmtExpr ast expr
-  | is _IntL    = return $ expr^?!_IntL.to show.packed
-  | is _DoubleL = return $ expr^?!_DoubleL.to show.packed
-  | is _BoolL   = return $ expr^?!_BoolL.to (\case {True->"true";_->"false"})
-  | is _CharL   = return . format1  "'{}'"  . quoteChar   $ expr^?!_CharL
-  | is _StringL = return . format1 "\"{}\"" . quoteString $ expr^?!_StringL
-  | is _Array   = fmtArray $ expr^?!_Array
-  | is _SConcat = liftM (T.intercalate " + ") $ case expr^?!_SConcat of
-                                                  [] -> return ["\"\""]
-                                                  xs -> mapM (fmtExpr ast) xs
-  | is _Funcall = case expr^?!_Funcall of
-                    (Builtin sig,          args) -> fmtBuiltin sig args
-                    (Input _ name,         _   ) -> fmtInputArg name & return
-                    (Fn (VParamName name), _   ) -> fmtParamName name
-                    (Fn (VAbsolutePath p), args) -> fmtFuncall p args
+fmtExpr ast = \case
+    IntL x    -> return $ show x ^. packed
+    DoubleL x -> return $ show x ^. packed
+    BoolL b   -> return $ if b then "true" else "false"
 
-  | is _Cond = let (c,t,f) = expr^?!_Cond
-               in liftCM3 (format "({} ? {} : {})") (fmtExpr ast c)
+    CharL ch  -> return $ format1  "'{}'"  (quoteChar ch)
+    StringL s -> return $ format1 "\"{}\"" (quoteString s)
+
+    SConcat [] -> return "\"\""
+    SConcat s  -> liftM (T.intercalate " + ") $ mapM (fmtExpr ast)  s
+
+    Array arr  -> fmtArray arr
+
+    Cond c t f -> liftCM3 (format "({} ? {} : {})") (fmtExpr ast c)
                                                     (fmtExpr ast t)
                                                     (fmtExpr ast f)
-  | otherwise = error $ "Java target: fmtExpr: unknown expression: " ++ show expr
-  where
-    is :: Prism' AbsExpr a -> Bool
-    is p = has p expr
 
+    Funcall (Builtin sig)          args -> fmtBuiltin sig args
+    Funcall (Input _ name)         _    -> fmtInputArg name & return
+    Funcall (Fn (VParamName name)) _    -> fmtParamName name
+    Funcall (Fn (VAbsolutePath p)) args -> fmtFuncall p args
+  where
     liftCM3 f x y z = liftM f $ liftM3 (,,) x y z
 
     fmtArray elems = do

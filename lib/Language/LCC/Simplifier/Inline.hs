@@ -34,20 +34,20 @@ inline maxStackDepth t ast =
 inlineExpr :: (Err.ErrorM m, ScopedAbs Type m, InliningEnv t m)
            => AbsExpr
            -> m AbsExpr
-inlineExpr expr
-  | is _Array   = liftM Array $ mapM inlineExpr (expr^?!_Array)
-  | is _SConcat = liftM (concatLits . SConcat) $ mapM inlineExpr (expr^?!_SConcat)
-  | is _Cond    = do
-      let (c,t,f) = over each inlineExpr (expr^?!_Cond)
+inlineExpr expr = case expr of
+    Array arr  -> liftM Array (mapM inlineExpr arr)
+    SConcat s  -> liftM (concatLits . SConcat) (mapM inlineExpr s)
 
-      c >>= \case
-        BoolL b -> if b then t else f
-        _       -> liftM3 Cond c t f
+    Cond c t f -> do
+      let (c',t',f') = over each inlineExpr (c,t,f)
 
-  | is _Funcall = do
+      c' >>= \case
+        BoolL b -> if b then t' else f'
+        _       -> liftM3 Cond c' t' f'
+
+    Funcall fn args -> do
       t <- getTarget
 
-      let (fn, args) = expr^?!_Funcall
       inlinedArgs <- mapM inlineExpr args
 
       case fn of
@@ -56,19 +56,19 @@ inlineExpr expr
         Fn (VAbsolutePath p) -> inlineFuncall (p^.from absolute) inlinedArgs
         Fn (VParamName name) -> fromMaybe expr `liftM` findBoundParam name
 
-  | otherwise   = return expr
+    _ -> return expr
   where
-    is p = has p expr
-
     concatLits :: AbsExpr -> AbsExpr
-    concatLits (SConcat [s]) = concatLits s
-    concatLits (SConcat (s:ss)) =
-      case (concatLits s, concatLits (SConcat ss)) of
-        (StringL s', SConcat ss') -> SConcat $ StringL s' : ss'
-        (StringL s', StringL ss') -> StringL $ s' ++ ss'
-        (SConcat s', SConcat ss') -> SConcat $ s' ++ ss'
-        (s', ss')                 -> SConcat [s',ss']
-    concatLits expr' = expr'
+    concatLits = \case
+        SConcat [s] -> concatLits s
+        SConcat (s:ss) ->
+          case (concatLits s, concatLits (SConcat ss)) of
+            (StringL s', SConcat ss') -> SConcat $ StringL s' : ss'
+            (StringL s', StringL ss') -> StringL $ s' ++ ss'
+            (SConcat s', SConcat ss') -> SConcat $ s' ++ ss'
+            (s', ss')                 -> SConcat [s',ss']
+
+        expr' -> expr'
 
 
 findBoundParam :: InliningEnv t m => String -> m (Maybe AbsExpr)
